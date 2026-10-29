@@ -42,12 +42,25 @@ the ASPI interface, as with any third-party ASPI manager. Code is not moved
 between the GPLv2 and the GPLv3 projects, unless its authors license it for
 both.
 
-## Hardware wanted
+## Testing and hardware wanted
 
-QEMU and 86Box emulate none of these devices, so testing needs real
-hardware. Reports are welcome. If you have any of these and can test, please
-open an issue: ZIP parallel, SuperDisk parallel, Backpack, Freecom, SyQuest
-parallel, Colorado/Ditto/Conner floppy or parallel tape drives, Ditto Dash
-or FC-20 controller cards.
+[86Box](https://github.com/86Box/86Box) (current master, autumn 2026)
+emulates several of these devices, so much can be tested without hardware:
+
+- a QIC-117 floppy tape drive on the floppy controller (QIC-80, QIC-80XL;
+  `src/floppy/fdd_tape.c`),
+- the Iomega Ditto parallel port tape drive (Ditto 2GB, Ditto Max,
+  QIC-3020; cartridges QIC-80, QIC-3010/3020, Travan TR-1 to TR-3, Ditto
+  2 to 7 GB; `src/device/lpt_ditto.c`),
+- the Micro Solutions BackPack CD-ROM (BPCK protocol;
+  `src/device/lpt_bpck.c`),
+- the Shuttle EPAT bridge with an Imation SuperDisk LS-120 (Imation's own
+  DOS driver works on it; `src/device/lpt_epat.c`).
+
+The ZIP drives on the parallel port (PPA, IMM) are not emulated. For them
+and for everything else real hardware is needed. If you have any of these
+and can test, please open an issue: ZIP parallel, Backpack, Freecom,
+SyQuest parallel, Colorado/Conner floppy or parallel tape drives, Ditto
+Dash or FC-20 controller cards.
 
 License: GNU General Public License version 2 only.

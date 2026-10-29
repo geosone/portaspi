@@ -1,14 +1,18 @@
 # Roadmap
 
-1. **ASPI layer and the ZIP drives** (PPA, IMM): host adapter inquiry,
-   execute SCSI I/O, chaining; SPP, PS/2 and EPP modes. Goal: `ASPIFDD.SYS`
-   and `EXFAT.SYS` on a parallel ZIP 100 and ZIP 250.
-2. **The paride protocol chips** (EPAT first, then BPCK, FRPW/FRIQ, ON20/26
-   and the rest): ATAPI devices (CD-ROM, LS-120) pass through; then ATA
-   disks with the SCSI-to-ATA translation.
+1. **ASPI layer and the first paride protocols, EPAT and BPCK**: host
+   adapter inquiry, execute SCSI I/O, chaining; SPP, PS/2 and EPP modes;
+   ATAPI packets pass through. Goal: `ASPIFDD.SYS` and `EXFAT.SYS` on the
+   SuperDisk LS-120 parallel, `ASPICDA.SYS` on the BackPack CD-ROM. Both
+   are emulated by 86Box, so this step can be tested automatically.
+2. **The ZIP drives** (PPA, IMM): SCSI over the port, on real hardware
+   (or a device model of our own, below). Then the remaining paride
+   protocols (FRPW/FRIQ, ON20/26 and the rest) and ATA disks with the
+   SCSI-to-ATA translation.
 3. **Floppy tape, reading**: QIC-117 on the floppy controller and on
    parallel port FDC adapters; reading QIC-80/3010/3020 tapes into
-   `ASPITAP.SYS` and OpenTape.
+   `ASPITAP.SYS` and OpenTape. 86Box has both: the floppy tape drive and
+   the Ditto parallel port drive.
 4. **Floppy tape, writing and formatting**: segments with ECC, bad sector
    map, volume table, streaming.
 5. **Optional**: the floppy drive as a SCSI disk; proprietary CD-ROM
@@ -16,15 +20,16 @@
 
 ## Testing
 
-No emulator has these devices, so there are two ways:
-
+- **86Box** (current master): floppy tape on the FDC, Ditto parallel,
+  BackPack CD-ROM and EPAT with an LS-120 (see the README). OpenASPI
+  already drives 86Box from its tests (`tests/dos_86box_upc.sh`); the same
+  way the PORTASPI tests can boot DOS with these devices.
 - **Real hardware**, with logs of `DEVICE=PORTASPI.SYS /V` and the
   OpenASPI tools (`ASPISCAN`, `ASPITEST`).
-- **A device model for tests**: QEMU's parallel port can be connected to a
-  chardev; a small program on the host could play a PPA or IMM ZIP drive
-  (or an EPAT adapter with an ATAPI CD-ROM) behind it. That would let the
-  OpenASPI QEMU test suites run against PORTASPI, as they do for AHCIASPI
-  and EUSBASPI. Floppy tape would need the same for QEMU's FDC.
+- **A device model of our own** for what no emulator has (the ZIP drives):
+  QEMU's parallel port can be connected to a chardev, and a small program
+  on the host could play a PPA or IMM ZIP drive behind it, so the OpenASPI
+  QEMU test suites run against PORTASPI too.
 
 ## Toolchain
 
