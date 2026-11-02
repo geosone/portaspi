@@ -56,12 +56,12 @@ emulates several of these devices, so much can be tested without hardware:
   `src/device/lpt_bpck.c`),
 - the Shuttle EPAT bridge with an Imation SuperDisk LS-120 (Imation's own
   DOS driver works on it; `src/device/lpt_epat.c`),
-- the Iomega ZIP 100 parallel port drive (PPA; Iomega's `ASPIPPM1.SYS`
-  works on it; `src/device/lpt_zip.c`, so far on the `lpt-zip` branch of
+- the Iomega ZIP 100 (PPA) and ZIP 250 (IMM) parallel port drives
+  (Iomega's `ASPIPPM1.SYS` and `ASPIPPM2.SYS` work on them;
+  `src/device/lpt_zip.c`, so far on the `lpt-zip` branch of
   [geosone/86Box](https://github.com/geosone/86Box/tree/lpt-zip)).
 
-The ZIP Plus and ZIP 250 parallel drives (IMM) are not emulated yet. For
-them and for everything else real hardware is needed. If you have any of
+For everything else real hardware is needed. If you have any of
 these and can test, please open an issue: ZIP parallel, Backpack, Freecom,
 SyQuest parallel, Colorado/Conner floppy or parallel tape drives, Ditto
 Dash or FC-20 controller cards.
