@@ -30,6 +30,71 @@ licensed for GPLv2 by its authors (see the README).
 | floppy tape | SCSI tape commands to the QIC-80 volume format (below) |
 | floppy drive | SCSI block commands to FDC read/write of sectors |
 
+## What the OpenASPI drivers need
+
+The drivers expect the same things from PORTASPI as from AHCIASPI and
+EUSBASPI.
+
+**ASPI functions.** PORTASPI needs:
+- 00h HA INQUIRY
+- 01h GET DEVICE TYPE
+- 02h EXECUTE SCSI I/O
+- 03h ABORT
+- 04h RESET DEVICE
+- 06h GET DISK INFO. It returns DriveFlags 00h for a drive that neither the
+  BIOS nor DOS uses. Every parallel port drive is such a drive, unless a
+  vendor driver loaded before PORTASPI has taken it.
+
+05h SET HOST ADAPTER PARAMETERS is not used.
+
+**Sense.** After each CHECK CONDITION, PORTASPI must fill the SRB with
+automatic sense data. A cartridge change must show up as UNIT ATTENTION on
+the next command. PORTASPI must not swallow the change, and it must not
+repeat the command for the driver. No retries, and no replays of writes.
+
+**Direct access devices** (`ASPIFDD`, `ASPIDSK`, `EXFAT.SYS`). These commands
+are needed:
+- TEST UNIT READY
+- INQUIRY: removable bit set, with the real vendor and product. ASPIFDD
+  chooses its devices by model name (ZIP, LS-120, SyQuest, ...).
+- READ CAPACITY
+- READ(10), WRITE(10), WRITE AND VERIFY(10), VERIFY(10)
+- PREVENT ALLOW MEDIUM REMOVAL
+- START STOP UNIT (eject)
+- REQUEST SENSE
+- MODE SENSE(6), header only (DBD, page 3Fh, 4 bytes): the WP bit in the
+  device-specific byte. Each volume load asks for it, and a protected
+  medium then gets no writes. For ATAPI devices behind a protocol chip,
+  MODE SENSE(6) is translated to MODE SENSE(10) and the answer converted
+  back, keeping the WP bit.
+
+**ATA disks behind a protocol chip** (for example the parallel EZ135 /
+EZFlyer). The SCSI to ATA layer works like AHCIASPI's `src/ata.inc`:
+- CHS addressing with the geometry from IDENTIFY, because these drives have
+  no LBA
+- the sense data per device, mapped from the ATA error register (NM, MC, WP)
+- the WP bit for MODE SENSE from GET MEDIA STATUS, where the drive has it.
+  GET MEDIA STATUS also reports a media change, and the drive clears it by
+  reporting it. MODE SENSE must then return UNIT ATTENTION, so the change
+  is not lost.
+
+**CD-ROM** (`ASPICDA`). PORTASPI passes these through: READ(10), READ CD
+(BEh), READ TOC (43h), READ SUB-CHANNEL (42h), PLAY AUDIO MSF (47h),
+PAUSE/RESUME (4Bh), SEEK(10), START STOP UNIT, PREVENT ALLOW, MODE SENSE(10)
+page 2Ah, and MODE SELECT(10).
+
+**Tape** (`ASPITAP`, `TAPECTL`). These commands are used: REWIND (01h),
+READ BLOCK LIMITS (05h), READ(6) / WRITE(6) (08h / 0Ah, with transfer
+length and fixed bit), WRITE FILEMARKS (10h), SPACE (11h), LOAD UNLOAD
+(1Bh), PREVENT ALLOW (1Eh), LOCATE(10) and LOCATE(16) (2Bh / 92h), READ
+POSITION (34h), LOG SENSE (4Dh), and MODE SENSE(6) / MODE SELECT(6).
+
+The 6 byte block translations (READ(6) to READ(10), REZERO UNIT to
+SEEK(10)) apply to block devices only: disk, WORM, CD and MO. On tape, 01h
+is REWIND, and 08h / 0Ah carry no LBA. AHCIASPI and EUSBASPI make the same
+distinction. The floppy tape back end produces exactly this tape command
+set.
+
 ## The parallel port
 
 - Port modes: SPP (nibble reads), PS/2 (byte reads), EPP; ECP only where a
