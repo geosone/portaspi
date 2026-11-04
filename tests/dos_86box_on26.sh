@@ -1,12 +1,14 @@
 #!/bin/bash
 # ATA hard disk behind an OnSpec 90c26 on LPT1 of 86Box (lpt_on26.c, the
-# "on26" LPT device of the lpt-on26 branch; AUTOMATION=ON): PORTASPI.SYS
+# "on26" LPT device of the lpt-on26 branch; AUTOMATION=ON). The adapter
+# takes the tertiary IDE board; the disk is an ordinary 86Box IDE hard disk
+# on its channel 2:0, which 86Box gives LBA from 1024 cylinders on: the
+# default 20 MB disk is addressed in CHS, MB=1000 in LBA. PORTASPI.SYS
 # translates SCSI to ATA, OpenASPI's ASPIDSK.SYS gives the FAT16 partition a
 # drive letter. DOS reads a file, copies a 100000 byte file to the floppy and
 # writes it back twice (plain and with VERIFY ON); the host compares the
 # copies and checks the file system. Writes only go to this image.
-# MGROPT: more PORTASPI options, for example /M:PS2. LBA=0: the drive has
-# CHS addressing only. MB: the disk size (default 20).
+# MGROPT: more PORTASPI options, for example /M:PS2. MB: the disk size.
 # ORIG=path: a vendor block driver (for example ValuStor's VSMOBILE.SYS, not
 # shipped) instead of PORTASPI and ASPIDSK, run as a black box against the
 # 86Box model; ORIGOPT: its options.
@@ -38,7 +40,9 @@ cp "$OPENASPI/build/dos-cda/boot.img" "$OUT/"
 sed -e '/^\[Other removable devices\]$/,$d' \
     -e 's/^lpt1_enabled = 1$/lpt1_enabled = 1\nlpt1_device = on26/' \
     "$OPENASPI/tests/fixtures/86box-zip.cfg" > "$OUT/86box.cfg"
-printf '\n[OnSpec 90c26 parallel port hard disk #1]\nimage = %s\nlba = %s\n' "$OUT/hd.img" "${LBA:-1}" >> "$OUT/86box.cfg"
+CYL=$((MB*2048 / (16*63)))
+printf '\n[Hard disks]\nhdd_01_parameters = 63, 16, %s, 0, ide\nhdd_01_fn = %s\nhdd_01_ide_channel = 2:0\n' \
+    "$CYL" "$OUT/hd.img" >> "$OUT/86box.cfg"
 grep -q '^lpt1_device = on26$' "$OUT/86box.cfg"
 if [ -n "$ORIG" ]; then
     printf 'DEVICE=%s %s\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
@@ -72,9 +76,9 @@ else
 fi
 mcopy -o -i "$OUT/boot.img" "$OPENASPI/build/dos/ASPISCAN.COM" "$OPENASPI/build/dos/ASPIDSK.SYS" ::/
 rm -f "$OUT/hd.img"
-truncate -s $((MB*1024*1024)) "$OUT/hd.img"
+truncate -s $((CYL*16*63*512)) "$OUT/hd.img"
 echo 'start=63, type=6' | sfdisk -q "$OUT/hd.img"
-PART=$((MB*2048 - 63))
+PART=$((CYL*16*63 - 63))
 mkfs.fat -F16 -i 26262626 -n PARDISK --offset 63 "$OUT/hd.img" $((PART / 2)) > "$OUT/mkfs.log"
 printf 'PORTASPI ON26 file read passed\r\n' > "$OUT/HD.TXT"
 head -c 100000 /dev/urandom > "$OUT/BIG.BIN"
