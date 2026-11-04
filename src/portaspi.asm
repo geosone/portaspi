@@ -3,7 +3,9 @@
 ;
 ; ASPI manager (SCSIMGR$) for SCSI devices behind a parallel port chip.
 ; This version knows Iomega's chips: the PPA3 of the ZIP 100 parallel port
-; drive (ppa.inc) and the IMM of the ZIP Plus and ZIP 250 (imm.inc).  It works alone or together with other ASPI
+; drive (ppa.inc) and the IMM of the ZIP Plus and ZIP 250 (imm.inc); and
+; the Shuttle EPAT bridge to an ATAPI drive, as in the parallel port
+; SuperDisk LS-120 (epat.inc, atapi.inc).  It works alone or together with other ASPI
 ; managers: it chains to a manager loaded before it, and managers loaded
 ; after it can chain to it.
 ;
@@ -35,7 +37,7 @@
 
 %include "aspi.inc"
 
-%define VERSION_STR '0.2'
+%define VERSION_STR '0.3'
 
 STACK_SIZE      equ     0800h           ; BIOS IRQ handlers run on it too
 NTARGET         equ     7               ; SCSI IDs 0..6, the adapter is 7
@@ -155,6 +157,7 @@ s_dir           db      0               ; SRB direction: 0 any, 1 in, 2 out
 s_len           dd      0               ; data length from the SRB
 s_xfer          dd      0               ; x_xfer / x_over of the request
 s_over          db      0
+s_err           db      0               ; x_err of the request
 
 ;=============================================================================
 ; ASPI entry point
@@ -371,6 +374,11 @@ srb_exec:
         cmp     cx, 16
         ja      .invalid
         mov     [cdb_len], cl
+        xor     eax, eax                ; ATAPI packets are 12 bytes
+        mov     [cdb_buf], eax
+        mov     [cdb_buf+4], eax
+        mov     [cdb_buf+8], eax
+        mov     [cdb_buf+12], eax
         push    si
         add     si, SRB_CDB
         mov     di, cdb_buf
@@ -388,6 +396,7 @@ srb_exec:
         mov     [x_len], eax
         mov     eax, [es:si+SRB_BufPointer]
         mov     [x_buf], eax
+        mov     [s_buf], eax
         mov     al, [es:si+SRB_Flags]
         and     al, SRB_DIR_MASK
         xor     ah, ah
@@ -403,7 +412,20 @@ srb_exec:
         mov     dword [x_len], 0
 .dirset:
         mov     [s_dir], ah
-        mov     [x_dir], ah
+        mov     byte [s_xlate], XL_NONE
+        cmp     byte [lpt_chip], CHIP_EPAT
+        jb      .go
+        call    translate_cdb           ; ATAPI drive
+        jnc     .xl
+        jmp     .invalid
+.xl:    cmp     byte [s_xlate], XL_NONE
+        je      .go
+        mov     word [x_buf], bounce
+        mov     [x_buf+2], cs
+        movzx   eax, word [s_blen]
+        mov     [x_len], eax
+.go:    mov     al, [s_dir]
+        mov     [x_dir], al
         call    dev_exec
         les     si, [srb_ptr]
         push    eax
@@ -411,6 +433,8 @@ srb_exec:
         mov     [s_xfer], eax
         mov     ah, [x_over]
         mov     [s_over], ah
+        mov     ah, [x_err]
+        mov     [s_err], ah
         pop     eax
         cmp     al, XR_OK
         jne     .hba_err
@@ -420,10 +444,26 @@ srb_exec:
         jz      .good
         cmp     al, STATUS_CHKCOND
         jne     .err
-        call    auto_sense
+        ; ATAPI drives cannot change their block size and reject a MODE
+        ; SELECT that only carries a block descriptor (ASPICD.SYS sends one
+        ; to set 2048 byte blocks).  Report success, as ATAPI managers do.
+        cmp     byte [s_xlate], XL_MODESELECT
+        jne     .check
+        cmp     byte [s_msel_bdonly], 0
+        je      .check
+        mov     al, [s_err]
+        shr     al, 4
+        cmp     al, SENSE_ILLEGAL_REQUEST
+        jne     .check
+        mov     byte [es:si+SRB_TargStat], 0
+        jmp     .good
+.check: call    auto_sense
         les     si, [srb_ptr]
         jmp     .err
-.good:  mov     byte [es:si+SRB_Status], SS_COMP
+.good:  cmp     byte [s_xlate], XL_MODESENSE
+        jne     .nomsb
+        call    modesense_back
+.nomsb: mov     byte [es:si+SRB_Status], SS_COMP
         call    exec_extras
         jmp     call_post
 .hba_err:
@@ -455,6 +495,9 @@ exec_extras:
         mov     byte [es:si+SRB_Status], SS_ERR
 .resid: test    byte [es:si+SRB_Flags], SRB_RESIDUAL
         jz      .out
+        xor     eax, eax
+        cmp     byte [s_xlate], XL_NONE ; translated: buffer sizes differ
+        jne     .set
         mov     eax, [s_len]
         sub     eax, [s_xfer]
         jae     .set
@@ -498,8 +541,14 @@ auto_sense:
         jne     .fake
         test    byte [x_status], 3Eh
         jz      .out
-.fake:  ; no sense data: an empty fixed format record
+.fake:  ; no sense data: a fixed format record with the sense key of an
+        ; ATAPI drive's error register, if there is one
         mov     byte [es:di], 70h
+        cmp     byte [es:si+SRB_SenseLen], 3
+        jb      .out
+        mov     al, [s_err]
+        shr     al, 4
+        mov     [es:di+2], al
         cmp     byte [es:si+SRB_SenseLen], 8
         jb      .out
         mov     byte [es:di+7], 0Ah
@@ -508,6 +557,8 @@ auto_sense:
 %include "lpt.inc"
 %include "ppa.inc"
 %include "imm.inc"
+%include "epat.inc"
+%include "atapi.inc"
 
 ;-----------------------------------------------------------------------------
 ; Stack
@@ -537,6 +588,7 @@ msg_bad_opt     db      'PORTASPI: unknown option ignored', 13, 10, 0
 msg_port        db      '  port ', 0
 msg_ppa         db      'h: Iomega PPA, ', 0
 msg_imm         db      'h: Iomega IMM, ', 0
+msg_epat        db      'h: Shuttle EPAT, ', 0
 msg_mode_nib    db      'nibble mode', 13, 10, 0
 msg_mode_ps2    db      'PS/2 mode', 13, 10, 0
 msg_mode_epp    db      'EPP mode', 13, 10, 0
@@ -644,7 +696,12 @@ try_port:
         mov     byte [lpt_chip], CHIP_IMM
         call    imm_init                ; the IMM answers command packets
         jnc     .chip
-        mov     byte [lpt_chip], CHIP_PPA
+        mov     byte [lpt_chip], CHIP_EPAT
+        call    epat_init               ; an ATAPI drive behind a Shuttle EPAT
+        jc      .ppa
+        mov     byte [lpt_mode], MODE_NIBBLE    ; the only EPAT mode so far
+        jmp     .chip
+.ppa:   mov     byte [lpt_chip], CHIP_PPA
         call    ppa_init
         jc      .none
 .chip:
@@ -709,17 +766,24 @@ inquire:
 .fail:  stc
         ret
 
-; the adapter name: "PPA pppp mode"
+; the adapter name: "chip port mode", for example "EPAT 0378 nibble"
 set_ident:
         push    cs
         pop     es
         mov     di, ha_ident
-        mov     si, id_ppa
-        cmp     byte [lpt_chip], CHIP_IMM
-        jne     .chip
-        mov     si, id_imm
-.chip:  movsw
-        movsw
+        mov     cx, 16
+        mov     al, ' '
+        rep     stosb
+        mov     di, ha_ident
+        movzx   si, byte [lpt_chip]
+        shl     si, 1
+        mov     si, [id_chips+si]
+.name:  lodsb
+        or      al, al
+        jz      .port
+        stosb
+        jmp     .name
+.port:  inc     di
         mov     ax, [lpt_base]
         mov     cx, 4
 .hex:   rol     ax, 4
@@ -740,15 +804,22 @@ set_ident:
 .n1:    cmp     byte [lpt_mode], MODE_EPP
         jne     .n2
         mov     si, id_epp
-.n2:    mov     cx, 7
-        rep     movsb
-        ret
+.n2:    mov     cx, ha_ident + 16
+        sub     cx, di
+.m:     lodsb
+        or      al, al
+        jz      .out
+        stosb
+        loop    .m
+.out:   ret
 
-id_ppa          db      'PPA '
-id_imm          db      'IMM '
-id_nibble       db      'nibble '
-id_ps2          db      'PS/2   '
-id_epp          db      'EPP    '
+id_chips        dw      id_ppa, id_imm, id_epat
+id_ppa          db      'PPA', 0
+id_imm          db      'IMM', 0
+id_epat         db      'EPAT', 0
+id_nibble       db      'nibble', 0
+id_ps2          db      'PS/2', 0
+id_epp          db      'EPP', 0
 
 print_port:
         mov     si, msg_port
@@ -759,7 +830,10 @@ print_port:
         cmp     byte [lpt_chip], CHIP_IMM
         jne     .chip
         mov     si, msg_imm
-.chip:  call    print
+.chip:  cmp     byte [lpt_chip], CHIP_EPAT
+        jne     .chip2
+        mov     si, msg_epat
+.chip2: call    print
         mov     si, msg_mode_nib
         cmp     byte [lpt_mode], MODE_PS2
         jne     .n1

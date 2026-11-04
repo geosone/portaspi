@@ -7,6 +7,7 @@
 
 CHIP_PPA        equ     0               ; Iomega PPA3 (ZIP 100), ppa.inc
 CHIP_IMM        equ     1               ; Iomega IMM (ZIP Plus, ZIP 250), imm.inc
+CHIP_EPAT       equ     2               ; Shuttle EPAT to ATAPI, epat.inc
 
 BURST           equ     512             ; ppa.c PPA_BURST_SIZE, imm.c IMM_BURST_SIZE
 SEL_TICKS       equ     2               ; selection: at least one tick
@@ -30,6 +31,7 @@ x_xfer          dd      0               ; bytes moved to or from the buffer
 x_over          db      0               ; the drive moved more, or the other way
 x_status        db      0               ; SCSI status byte
 x_msg           db      0
+x_err           db      0               ; ATAPI: the error register
 x_bulk          db      0
 x_dummy         dw      0               ; overrun bytes
 x_take          dw      0               ; buffer bytes of this transfer
@@ -195,11 +197,15 @@ norm_buf:
 ; The chip of the port
 ;-----------------------------------------------------------------------------
 dev_exec:
+        cmp     byte [lpt_chip], CHIP_EPAT
+        je      epat_exec
         cmp     byte [lpt_chip], CHIP_IMM
         je      imm_exec
         jmp     ppa_exec
 
 dev_bus_reset:
+        cmp     byte [lpt_chip], CHIP_EPAT
+        je      epat_reset
         cmp     byte [lpt_chip], CHIP_IMM
         je      imm_bus_reset
         jmp     ppa_bus_reset

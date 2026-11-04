@@ -1,8 +1,10 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
-**Status: the ZIP drives.** `PORTASPI.SYS` 0.2 drives Iomega's parallel
-port ZIP drives in nibble, PS/2 and EPP mode: the ZIP 100 (PPA chip) and
-the ZIP Plus and ZIP 250 (IMM chip). Everything else below is still the
+**Status: ZIP drives and the LS-120.** `PORTASPI.SYS` 0.3 drives Iomega's
+parallel port ZIP drives in nibble, PS/2 and EPP mode: the ZIP 100 (PPA
+chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives an ATAPI
+drive behind a Shuttle EPAT bridge, such as the parallel port SuperDisk
+LS-120, so far in nibble mode only. Everything else below is still the
 plan.
 
 `PORTASPI.SYS` is an ASPI manager (device `SCSIMGR$`) for DOS. It is meant
@@ -42,8 +44,14 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
 - `/M:` the port mode. By default it uses PS/2 when the port can read bytes
   (or has an ECR), else nibble mode. EPP is only used with `/M:EPP`.
 - `/T:` the command timeout in seconds (default 15).
-- PORTASPI finds the chip on its own: the IMM answers IEEE 1284.3
-  command packets, otherwise it tries the PPA.
+- PORTASPI finds the chip on its own. It tries the IMM first (it answers
+  IEEE 1284.3 command packets), then the EPAT (the drive's task file must
+  keep what is written to it), then the PPA.
+- The EPAT is driven in nibble mode whatever `/M:` says. 86Box does not
+  emulate its byte mode block reads or EPP, so they are not in yet. The
+  ATAPI drive behind it is target 0. MODE SENSE(6)/SELECT(6), READ(6),
+  WRITE(6), SEEK(6) and REZERO UNIT are rewritten into the 10-byte commands
+  for it, as AHCIASPI and EUSBASPI do.
 - The ASPI adapter name shows the chip, port and mode, for example
   `PPA 0378 PS/2` or `IMM 0378 EPP`. The drive keeps its SCSI ID (6 for
   the ZIP 100).
@@ -56,7 +64,9 @@ Building needs NASM: `make` gives `build/PORTASPI.SYS`.
 86Box master (built with `AUTOMATION=ON`) with a ZIP 100 on LPT1. It loads
 PORTASPI and OpenASPI's `ASPIFDD.SYS`, then copies files on the cartridge,
 also with `VERIFY ON`. The image is then checked on the host. `ZIP250=1`
-takes the ZIP 250 (IMM) instead. `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
+takes the ZIP 250 (IMM) instead. `make test-ls120` does the same with an
+LS-120 behind the EPAT (OpenASPI's `tests/dos_86box_ls120.sh LPT=1 MGR=`).
+`PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.
 

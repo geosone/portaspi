@@ -1,6 +1,9 @@
 # Roadmap
 
-1. **ASPI layer and the first paride protocols, EPAT and BPCK**: host
+1. **ASPI layer and the first paride protocols, EPAT and BPCK**. **EPAT is
+   done in nibble mode (PORTASPI 0.3)**, with ASPIFDD on the LS-120 tested
+   in 86Box; byte mode and EPP wait for an emulator or hardware, BPCK is
+   next. Host
    adapter inquiry, execute SCSI I/O, chaining; SPP, PS/2 and EPP modes;
    ATAPI packets pass through. Goal: `ASPIFDD.SYS` and `EXFAT.SYS` on the
    SuperDisk LS-120 parallel, `ASPICDA.SYS` on the BackPack CD-ROM. Both
