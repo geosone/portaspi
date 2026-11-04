@@ -11,6 +11,8 @@ CHIP_EPAT       equ     2               ; Shuttle EPAT to ATAPI, epat.inc
 CHIP_BPCK       equ     3               ; Micro Solutions BackPack to ATAPI, bpck.inc
 CHIP_ON26       equ     4               ; OnSpec 90c26 to ATA or ATAPI, on26.inc
 CHIP_EPIA       equ     5               ; Shuttle EPIA to ATA or ATAPI, epia.inc
+CHIP_FRPW       equ     6               ; Freecom Power to ATA or ATAPI, fc.inc
+CHIP_FRIQ       equ     7               ; Freecom IQ to ATA or ATAPI, fc.inc
 
 BURST           equ     512             ; ppa.c PPA_BURST_SIZE, imm.c IMM_BURST_SIZE
 SEL_TICKS       equ     2               ; selection: at least one tick

@@ -308,6 +308,8 @@ br_connect:
         je      on26_connect
         cmp     byte [lpt_chip], CHIP_EPIA
         je      epia_connect
+        cmp     byte [lpt_chip], CHIP_FRPW
+        jae     fc_connect
         jmp     epat_connect
 
 br_disconnect:
@@ -317,9 +319,13 @@ br_disconnect:
         je      on26_disconnect
         cmp     byte [lpt_chip], CHIP_EPIA
         je      epia_disconnect
+        cmp     byte [lpt_chip], CHIP_FRPW
+        jae     fc_disconnect
         jmp     epat_disconnect
 
 tf_wr:  push    ax
+        cmp     byte [lpt_chip], CHIP_FRPW
+        jae     .f
         cmp     byte [lpt_chip], CHIP_ON26
         je      .o
         cmp     byte [lpt_chip], CHIP_EPIA
@@ -340,9 +346,15 @@ tf_wr:  push    ax
 .e:     call    epia_wr                 ; epia.c cont_map[0] is 0
         pop     ax
         ret
+.f:     add     ah, FC_TF
+        call    fc_wr
+        pop     ax
+        ret
 
 tf_rd:  push    bx
         mov     bh, ah
+        cmp     byte [lpt_chip], CHIP_FRPW
+        jae     .f
         cmp     byte [lpt_chip], CHIP_ON26
         je      .o
         cmp     byte [lpt_chip], CHIP_EPIA
@@ -358,6 +370,9 @@ tf_rd:  push    bx
 .o:     call    on26_rd
         jmp     .out
 .e:     call    epia_rd
+        jmp     .out
+.f:     add     ah, FC_TF
+        call    fc_rd
 .out:   mov     ah, bh
         pop     bx
         ret
@@ -369,6 +384,8 @@ blk_get:
         je      on26_get
         cmp     byte [lpt_chip], CHIP_EPIA
         je      epia_get
+        cmp     byte [lpt_chip], CHIP_FRPW
+        jae     fc_get
         jmp     epat_get
 
 blk_put:
@@ -378,6 +395,8 @@ blk_put:
         je      on26_put
         cmp     byte [lpt_chip], CHIP_EPIA
         je      epia_put
+        cmp     byte [lpt_chip], CHIP_FRPW
+        jae     fc_put
         jmp     epat_put
 
 ; wait until the drive is not busy.  EBX = timeout in ticks.

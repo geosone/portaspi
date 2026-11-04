@@ -10,7 +10,10 @@
    disks behind the EPAT (nibble) and the EPIA (nibble and PS/2) are
    done**, on 86Box models checked with Shuttle's EPATHD.SYS and
    EPIAHD.SYS (lpt-epat-hdd branch), and so is the BackPack hard drive
-   (checked with Micro Solutions' BPHDDRV.SYS). Host
+   (checked with Micro Solutions' BPHDDRV.SYS). **FRPW and FRIQ are done
+   (nibble and PS/2)**: CD-ROM and hard disk behind Freecom's Power
+   adapter and IQ cable, on an 86Box model checked with Freecom's
+   G735.SYS and POWER-CD.SYS. Host
    adapter inquiry, execute SCSI I/O, chaining; SPP, PS/2 and EPP modes;
    ATAPI packets pass through. Goal: `ASPIFDD.SYS` and `EXFAT.SYS` on the
    SuperDisk LS-120 parallel, `ASPICDA.SYS` on the BackPack CD-ROM. Both
@@ -20,7 +23,8 @@
    (PPA, PORTASPI 0.1) and the ZIP 250 (IMM, 0.2)**, both tested in 86Box in
    all three port modes; they came first, because the drives need no
    translation. Then the remaining paride
-   protocols (FRPW/FRIQ, ON20/26 and the rest) and ATA disks with the
+   protocols (FRPW/FRIQ and ON26 are done, the rest are rare) and ATA
+   disks with the
    SCSI-to-ATA translation.
 3. **Floppy tape, reading**: QIC-117 on the floppy controller and on
    parallel port FDC adapters; reading QIC-80/3010/3020 tapes into

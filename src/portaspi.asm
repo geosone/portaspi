@@ -567,6 +567,7 @@ auto_sense:
 %include "bpck.inc"
 %include "on26.inc"
 %include "epia.inc"
+%include "fc.inc"
 %include "ata.inc"
 %include "atapi.inc"
 
@@ -603,6 +604,8 @@ msg_epat        db      'h: Shuttle EPAT, ', 0
 msg_bpck        db      'h: Micro Solutions BackPack, ', 0
 msg_on26        db      'h: OnSpec 90c26, ', 0
 msg_epia        db      'h: Shuttle EPIA, ', 0
+msg_frpw        db      'h: Freecom Power, ', 0
+msg_friq        db      'h: Freecom IQ, ', 0
 msg_mode_nib    db      'nibble mode', 13, 10, 0
 msg_mode_ps2    db      'PS/2 mode', 13, 10, 0
 msg_mode_epp    db      'EPP mode', 13, 10, 0
@@ -732,11 +735,20 @@ try_port:
         mov     byte [lpt_mode], MODE_NIBBLE
         jmp     .chip
 .ppa3:  call    epia_init               ; an ATA or ATAPI drive behind an EPIA
-        jc      .ppa4
+        jc      .ppa5
         cmp     byte [lpt_mode], MODE_EPP       ; nibble or 8-bit so far
         jne     .chip
         mov     byte [lpt_mode], MODE_NIBBLE
         jmp     .chip
+.ppa5:  mov     al, [lpt_mode]          ; a drive behind a Freecom bridge
+        cmp     al, MODE_EPP            ; nibble or 8-bit so far
+        jne     .fc
+        mov     byte [lpt_mode], MODE_NIBBLE
+.fc:    push    ax
+        call    fc_init
+        pop     ax
+        jnc     .chip
+        mov     [lpt_mode], al
 .ppa4:  mov     byte [lpt_chip], CHIP_PPA
         call    ppa_init
         jc      .none
@@ -849,13 +861,15 @@ set_ident:
         loop    .m
 .out:   ret
 
-id_chips        dw      id_ppa, id_imm, id_epat, id_bpck, id_on26, id_epia
+id_chips        dw      id_ppa, id_imm, id_epat, id_bpck, id_on26, id_epia, id_frpw, id_friq
 id_ppa          db      'PPA', 0
 id_imm          db      'IMM', 0
 id_epat         db      'EPAT', 0
 id_bpck         db      'BPCK', 0
 id_on26         db      'ON26', 0
 id_epia         db      'EPIA', 0
+id_frpw         db      'FRPW', 0
+id_friq         db      'FRIQ', 0
 id_nibble       db      'nibble', 0
 id_ps2          db      'PS/2', 0
 id_epp          db      'EPP', 0
@@ -881,7 +895,13 @@ print_port:
 .chip4: cmp     byte [lpt_chip], CHIP_EPIA
         jne     .chip5
         mov     si, msg_epia
-.chip5: call    print
+.chip5: cmp     byte [lpt_chip], CHIP_FRPW
+        jne     .chip6
+        mov     si, msg_frpw
+.chip6: cmp     byte [lpt_chip], CHIP_FRIQ
+        jne     .chip7
+        mov     si, msg_friq
+.chip7: call    print
         mov     si, msg_mode_nib
         cmp     byte [lpt_mode], MODE_PS2
         jne     .n1

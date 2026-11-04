@@ -14,7 +14,8 @@
 # EPATHD.SYS), ORIGDSK names the block driver after it: ASPIDSK for
 # OpenASPI's, or a path (Shuttle's ASPIHDRM.SYS); ORIGDSKOPT: its options.
 # BRIDGE: the bridge of the disk on LPT1, on26, epat (Shuttle EPAT), epia
-# (Shuttle EPIA) or bpck (Micro Solutions BackPack; ORIG= its BPHDDRV.SYS).
+# (Shuttle EPIA), bpck (Micro Solutions BackPack; ORIG= its BPHDDRV.SYS),
+# frpw (Freecom Power) or friq (Freecom IQ).
 # The FAT16 file system is laid out as DOS FORMAT does (1 reserved sector,
 # 63 hidden, 16 heads of 63 sectors): Shuttle's ASPIHDRM.SYS counts on it.
 set -euo pipefail
@@ -117,6 +118,8 @@ case "$BRIDGE" in
     epat) NAME="Shuttle EPAT" ;;
     epia) NAME="Shuttle EPIA" ;;
     bpck) NAME="MicroSolutions BackPack" ;;
+    frpw) NAME="Freecom Power" ;;
+    friq) NAME="Freecom IQ" ;;
     *) NAME="OnSpec 90c26" ;;
 esac
 DRV=PORTASPI

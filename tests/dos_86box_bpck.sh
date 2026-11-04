@@ -7,7 +7,12 @@
 # MGROPT: more PORTASPI options, for example /M:PS2.
 # ORIG=path: Micro Solutions' own BPCDDRV.SYS (not shipped) instead of
 # PORTASPI and ASPICDA, run as a black box against the 86Box model;
-# BPOPT: its options, for example MODE=0.
+# BPOPT: its options, for example MODE=0. ORIGDEV: the device name the
+# driver gives SHSUCDX (BPCDDRV$, or what BPOPT names with /D:).
+# BRIDGE: the bridge of the drive on LPT1, bpck (the BackPack), on26,
+# epia, frpw (Freecom Power) or friq (Freecom IQ); ORIG= Freecom's
+# POWER-CD.SYS (IQ) or its older G735.SYS (Power) with BPOPT=/D:FCCD001
+# and ORIGDEV=FCCD001 for those.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OPENASPI=${OPENASPI:-$ROOT/../OpenAspi}
@@ -18,6 +23,8 @@ MGR=${MGR:-$ROOT/build/PORTASPI.SYS}
 MGROPT=${MGROPT:-}
 ORIG=${ORIG:-}
 BPOPT=${BPOPT:-}
+ORIGDEV=${ORIGDEV:-BPCDDRV\$}
+BRIDGE=${BRIDGE:-bpck}
 OUT=${OUT:-$ROOT/build/86box-bpck}
 test -x "$BOX"
 test -d "$ROMDIR"
@@ -38,11 +45,24 @@ sed -e 's/^lpt1_enabled = 0$/lpt1_enabled = 1/' \
     -e 's/^cdrom_01_image_path = cd.cue$/cdrom_01_image_path = cd.iso/' \
     "$OPENASPI/tests/fixtures/86box-upc.cfg" > "$OUT/86box.cfg"
 grep -q '^cdrom_01_parameters = 1, lpt$' "$OUT/86box.cfg"
+if [ "$BRIDGE" != bpck ]; then
+    sed -i "s/^cdrom_01_lpt_port = 0$/&\ncdrom_01_lpt_bridge = $BRIDGE/" "$OUT/86box.cfg"
+    grep -q "^cdrom_01_lpt_bridge = $BRIDGE$" "$OUT/86box.cfg"
+fi
+case "$BRIDGE" in
+    on26) NAME="OnSpec 90c26" ;;
+    epia) NAME="Shuttle EPIA" ;;
+    frpw) NAME="Freecom Power" ;;
+    friq) NAME="Freecom IQ" ;;
+    *) NAME="BackPack" ;;
+esac
+DRV=PORTASPI
 CDDEV=ASPICDA0
 if [ -n "$ORIG" ]; then
-    CDDEV='BPCDDRV$'
-    printf 'DEVICE=BPCDDRV.SYS %s\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
-        "$BPOPT" > "$OUT/CONFIG.SYS"
+    CDDEV=$ORIGDEV
+    DRV=$(basename "$ORIG" | tr a-z A-Z)
+    printf 'DEVICE=%s %s\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
+        "$DRV" "$BPOPT" > "$OUT/CONFIG.SYS"
 else
     printf 'DEVICE=PORTASPI.SYS /V %s\r\nDEVICE=ASPICDA.SYS /D:ASPICDA0 /V\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
         "$MGROPT" > "$OUT/CONFIG.SYS"
@@ -61,7 +81,7 @@ sed -i 's/$/\r/' "$OUT/AUTOEXEC.BAT"
 mdel -i "$OUT/boot.img" ::/BIG.BIN ::/AHCIASPI.SYS 2>/dev/null || true
 mcopy -o -i "$OUT/boot.img" "$OUT/CONFIG.SYS" "$OUT/AUTOEXEC.BAT" ::/
 if [ -n "$ORIG" ]; then
-    mcopy -o -i "$OUT/boot.img" "$ORIG" ::/BPCDDRV.SYS
+    mcopy -o -i "$OUT/boot.img" "$ORIG" ::/"$DRV"
 else
     mcopy -o -i "$OUT/boot.img" "$MGR" ::/PORTASPI.SYS
 fi
@@ -73,4 +93,4 @@ run_86box_dos --done 'PORTASPI BPCK DONE' \
     --read-text 'OpenASPI ASPICDA read test'
 mcopy -o -i "$OUT/boot.img" ::/CDBIG.BIN "$OUT/CDBIG.BIN"
 cmp "$OUT/CDBIG.BIN" "$OPENASPI/build/dos-cda/cdroot/SUB/BIG.BIN"
-echo "86Box BackPack CD-ROM through PORTASPI: read and compare passed"
+echo "86Box $NAME CD-ROM through $DRV: read and compare passed"
