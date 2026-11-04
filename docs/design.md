@@ -19,8 +19,8 @@ Each back end gives the same small interface to the ASPI layer: "execute
 this CDB on target t with this data buffer" and "reset". The ASPI layer
 (host adapter inquiry, device type, execute SCSI I/O, abort, reset,
 chaining to an earlier manager) is the same as in AHCIASPI and EUSBASPI; its
-behaviour is the reference, but the code has to be written again or
-licensed for GPLv2 by its authors (see the README).
+behaviour is the reference. PORTASPI takes the code from EUSBASPI, whose
+author licenses it for GPLv2 as well (see the README).
 
 | Back end | Translation |
 |---|---|

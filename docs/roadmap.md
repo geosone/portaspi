@@ -6,7 +6,9 @@
    SuperDisk LS-120 parallel, `ASPICDA.SYS` on the BackPack CD-ROM. Both
    are emulated by 86Box, so this step can be tested automatically.
 2. **The ZIP drives** (PPA, IMM): SCSI over the port. Both are emulated
-   by 86Box (`lpt-zip` branch): the ZIP 100 (PPA) and the ZIP 250 (IMM). Then the remaining paride
+   by 86Box master: the ZIP 100 (PPA) and the ZIP 250 (IMM). **Done for the
+   ZIP 100 (PPA, PORTASPI 0.1)**, tested in 86Box in all three port modes;
+   it came first, because the drive needs no translation. Then the remaining paride
    protocols (FRPW/FRIQ, ON20/26 and the rest) and ATA disks with the
    SCSI-to-ATA translation.
 3. **Floppy tape, reading**: QIC-117 on the floppy controller and on
@@ -22,8 +24,8 @@
 
 - **86Box** (current master): floppy tape on the FDC, Ditto parallel,
   BackPack CD-ROM and EPAT with an LS-120 (see the README); the ZIP 100
-  (PPA) and ZIP 250 (IMM) parallel on the `lpt-zip` branch of
-  geosone/86Box. OpenASPI's `tests/dos_86box_zip.sh` (`ZIP250=1` for the
+  (PPA) and ZIP 250 (IMM) parallel. `make test` runs PORTASPI on the ZIP
+  100 (see the README). OpenASPI's `tests/dos_86box_zip.sh` (`ZIP250=1` for the
   IMM drive) already runs Iomega's `ASPIPPM1.SYS`/`ASPIPPM2.SYS` and
   `ASPIFDD.SYS` on them. The IMM model also records where Iomega's driver
   differs from Linux `imm.c` (see `lpt_zip.c`). OpenASPI

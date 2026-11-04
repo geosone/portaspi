@@ -1,9 +1,11 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
-**Status: idea.** There is no code yet. This repository collects the plan.
+**Status: first back end.** `PORTASPI.SYS` 0.1 drives the Iomega ZIP 100
+parallel port drive (PPA chip) in nibble, PS/2 and EPP mode. Everything else
+below is still the plan.
 
-`PORTASPI.SYS` is planned as an ASPI manager (device `SCSIMGR$`) for DOS. It
-would make old devices on the parallel port and the floppy controller
+`PORTASPI.SYS` is an ASPI manager (device `SCSIMGR$`) for DOS. It is meant
+to make old devices on the parallel port and the floppy controller
 usable for DOS ASPI drivers: Iomega ZIP drives on the parallel port,
 parallel port CD-ROM, disk and tape drives, and floppy tape drives (QIC-80,
 Travan, Ditto). Each device appears as an ordinary SCSI target, so the
@@ -27,6 +29,33 @@ ASPI manager loaded before it, so all of them can be used together.
 - [Design](docs/design.md): how the manager is built, and what is hard
 - [Roadmap](docs/roadmap.md): the order of the work and how to test it
 
+## Use
+
+```dos
+DEVICE=C:\OPENASPI\PORTASPI.SYS [/P:378] [/M:NIBBLE|PS2|EPP] [/T:15] [/ID:name] [/Q] [/V]
+DEVICE=C:\OPENASPI\ASPIFDD.SYS
+```
+
+- `/P:` the port address in hex. By default PORTASPI tries the LPT ports
+  in the BIOS data area and takes the first one with a drive.
+- `/M:` the port mode. By default it uses PS/2 when the port can read bytes
+  (or has an ECR), else nibble mode. EPP is only used with `/M:EPP`.
+- `/T:` the command timeout in seconds (default 15).
+- The ASPI adapter name shows the chip, port and mode, for example
+  `PPA 0378 PS/2`. The drive keeps its SCSI ID (6 for the ZIP 100).
+
+Building needs NASM: `make` gives `build/PORTASPI.SYS`.
+
+## Testing
+
+`make test OPENASPI=../OpenAspi [MODE=NIBBLE|PS2|EPP]` boots MS-DOS in
+86Box master (built with `AUTOMATION=ON`) with a ZIP 100 on LPT1. It loads
+PORTASPI and OpenASPI's `ASPIFDD.SYS`, then copies files on the cartridge,
+also with `VERIFY ON`. The image is then checked on the host. `PROT=1 make
+test` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
+checks CHECK CONDITION and the sense data. This uses OpenASPI's
+`tests/dos_86box_zip.sh` with `MGR=`.
+
 ## Why GPL version 2 only
 
 Most of the knowledge about these devices is in Linux drivers: `ppa` and
@@ -40,7 +69,8 @@ OpenASPI, AHCIASPI and EUSBASPI are GPL version 3. That is no problem:
 PORTASPI is a separate program, and the drivers talk to it only through
 the ASPI interface, as with any third-party ASPI manager. Code is not moved
 between the GPLv2 and the GPLv3 projects, unless its authors license it for
-both.
+both. The ASPI layer of PORTASPI comes from EUSBASPI; its author licenses
+it for PORTASPI under the GPL version 2 as well.
 
 ## Testing and hardware wanted
 
@@ -56,10 +86,9 @@ emulates several of these devices, so much can be tested without hardware:
   `src/device/lpt_bpck.c`),
 - the Shuttle EPAT bridge with an Imation SuperDisk LS-120 (Imation's own
   DOS driver works on it; `src/device/lpt_epat.c`),
-- the Iomega ZIP 100 (PPA) and ZIP 250 (IMM) parallel port drives
-  (Iomega's `ASPIPPM1.SYS` and `ASPIPPM2.SYS` work on them;
-  `src/device/lpt_zip.c`, so far on the `lpt-zip` branch of
-  [geosone/86Box](https://github.com/geosone/86Box/tree/lpt-zip)).
+- the Iomega ZIP 100 (PPA) and ZIP 250 / ZIP Plus (IMM) parallel port
+  drives (Iomega's `ASPIPPM1.SYS` and `ASPIPPM2.SYS` work on them;
+  `src/device/lpt_zip.c`, in master since 2026-11-04).
 
 For everything else real hardware is needed. If you have any of
 these and can test, please open an issue: ZIP parallel, Backpack, Freecom,
