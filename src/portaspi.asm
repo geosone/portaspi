@@ -709,10 +709,13 @@ try_port:
         call    imm_init                ; the IMM answers command packets
         jnc     .chip
         mov     byte [lpt_chip], CHIP_EPAT
-        call    epat_init               ; an ATAPI drive behind a Shuttle EPAT
-        jc      .ppa
+        mov     al, [lpt_mode]
+        push    ax
         mov     byte [lpt_mode], MODE_NIBBLE    ; the only EPAT mode so far
-        jmp     .chip
+        call    epat_init               ; a drive behind a Shuttle EPAT
+        pop     ax
+        jnc     .chip
+        mov     [lpt_mode], al
 .ppa:   mov     byte [lpt_chip], CHIP_BPCK
         call    bpck_init               ; an ATAPI drive behind a BackPack
         jc      .ppa2

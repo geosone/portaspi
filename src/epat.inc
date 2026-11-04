@@ -179,7 +179,10 @@ epat_put:
 
 ;-----------------------------------------------------------------------------
 ; epat_init: an EPAT with a drive on lpt_base?  As epat_test_proto(): the
-; drive's task file must keep what is written to it.  CF if not.
+; drive's task file must keep what is written to it.  Then a soft reset
+; through the device control register (16h, epat.c cont_map[1] + 6) and the
+; signature tell an ATAPI drive (14h EBh) from an ATA disk.  CF if none.
+; -> dev_ata: 1 for an ATA disk, 0 for an ATAPI drive
 ;-----------------------------------------------------------------------------
 epat_init:
         mov     dx, [lpt_base]
@@ -205,8 +208,37 @@ epat_init:
 .same:  add     bl, 13
         cmp     bl, 13 * 19
         jb      .t
-        call    epat_disconnect
-        cmp     cx, 1
-        cmc                             ; CF if any value was lost
+        cmp     cx, 0
+        jne     .gone                   ; a value was lost
+        mov     ax, 160Eh               ; SRST, nIEN
+        call    epat_wr
+        mov     cx, 7                   ; 100 us
+        call    delay15
+        mov     ax, 160Ah               ; nIEN
+        call    epat_wr
+        mov     cx, 133                 ; 2 ms
+        call    delay15
+        mov     ax, (TF_DRVHD << 8) | 0A0h
+        call    tf_wr
+        mov     ebx, 18 * 20            ; 20 s for the drive to spin up
+        call    atapi_wait
+        jc      .gone
+        mov     ah, TF_BCLO             ; the signature: 14h EBh is ATAPI
+        call    tf_rd
+        mov     bl, al
+        mov     ah, TF_BCHI
+        call    tf_rd
+        mov     bh, al
+        mov     byte [dev_ata], 0
+        cmp     bx, 0EB14h
+        je      .ok
+        mov     byte [dev_ata], 1
+        call    ata_probe               ; IDENTIFY DEVICE
+        jc      .gone
+.ok:    call    epat_disconnect
+        clc
+        ret
+.gone:  call    epat_disconnect
+        stc
         ret
 
