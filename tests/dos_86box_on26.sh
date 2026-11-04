@@ -7,6 +7,9 @@
 # copies and checks the file system. Writes only go to this image.
 # MGROPT: more PORTASPI options, for example /M:PS2. LBA=0: the drive has
 # CHS addressing only. MB: the disk size (default 20).
+# ORIG=path: a vendor block driver (for example ValuStor's VSMOBILE.SYS, not
+# shipped) instead of PORTASPI and ASPIDSK, run as a black box against the
+# 86Box model; ORIGOPT: its options.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OPENASPI=${OPENASPI:-$ROOT/../OpenAspi}
@@ -15,11 +18,13 @@ BOX=${BOX:-$OPENASPI/../86Box/build-zip/src/86Box}
 ROMDIR=${ROMDIR:-$HOME/.local/share/86Box/roms}
 MGR=${MGR:-$ROOT/build/PORTASPI.SYS}
 MGROPT=${MGROPT:-}
+ORIG=${ORIG:-}
+ORIGOPT=${ORIGOPT:-}
 MB=${MB:-20}
 OUT=${OUT:-$ROOT/build/86box-on26}
 test -x "$BOX"
 test -d "$ROMDIR"
-test -f "$MGR"
+if [ -n "$ORIG" ]; then test -f "$ORIG"; else test -f "$MGR"; fi
 mkdir -p "$OUT"
 if [ -e "$OUT/control.sock" ]; then
     echo "Refusing to reuse an existing control socket: $OUT/control.sock" >&2
@@ -35,8 +40,13 @@ sed -e '/^\[Other removable devices\]$/,$d' \
     "$OPENASPI/tests/fixtures/86box-zip.cfg" > "$OUT/86box.cfg"
 printf '\n[OnSpec 90c26 parallel port hard disk #1]\nimage = %s\nlba = %s\n' "$OUT/hd.img" "${LBA:-1}" >> "$OUT/86box.cfg"
 grep -q '^lpt1_device = on26$' "$OUT/86box.cfg"
-printf 'DEVICE=PORTASPI.SYS /V %s\r\nDEVICE=ASPIDSK.SYS\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
-    "$MGROPT" > "$OUT/CONFIG.SYS"
+if [ -n "$ORIG" ]; then
+    printf 'DEVICE=%s %s\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
+        "$(basename "$ORIG" | tr a-z A-Z)" "$ORIGOPT" > "$OUT/CONFIG.SYS"
+else
+    printf 'DEVICE=PORTASPI.SYS /V %s\r\nDEVICE=ASPIDSK.SYS\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
+        "$MGROPT" > "$OUT/CONFIG.SYS"
+fi
 cat > "$OUT/AUTOEXEC.BAT" <<'BAT'
 @ECHO OFF
 ASPISCAN > AUX
@@ -55,7 +65,11 @@ BAT
 sed -i 's/$/\r/' "$OUT/AUTOEXEC.BAT"
 mdel -i "$OUT/boot.img" ::/BIG.BIN ::/AHCIASPI.SYS ::/ASPICDA.SYS 2>/dev/null || true
 mcopy -o -i "$OUT/boot.img" "$OUT/CONFIG.SYS" "$OUT/AUTOEXEC.BAT" ::/
-mcopy -o -i "$OUT/boot.img" "$MGR" ::/PORTASPI.SYS
+if [ -n "$ORIG" ]; then
+    mcopy -o -i "$OUT/boot.img" "$ORIG" ::/"$(basename "$ORIG" | tr a-z A-Z)"
+else
+    mcopy -o -i "$OUT/boot.img" "$MGR" ::/PORTASPI.SYS
+fi
 mcopy -o -i "$OUT/boot.img" "$OPENASPI/build/dos/ASPISCAN.COM" "$OPENASPI/build/dos/ASPIDSK.SYS" ::/
 rm -f "$OUT/hd.img"
 truncate -s $((MB*1024*1024)) "$OUT/hd.img"
