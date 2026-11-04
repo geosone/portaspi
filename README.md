@@ -1,12 +1,16 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
-**Status: ZIP drives, LS-120 and BackPack CD-ROM.** `PORTASPI.SYS` 0.4
+**Status: ZIP drives, LS-120, BackPack CD-ROM, OnSpec hard disks.**
+`PORTASPI.SYS` 0.5
 drives Iomega's parallel port ZIP drives in nibble, PS/2 and EPP mode: the
 ZIP 100 (PPA chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives
 ATAPI drives behind two bridges: the Shuttle EPAT, as in the parallel port
 SuperDisk LS-120 (nibble mode so far), and the Micro Solutions BackPack,
-as in the BackPack CD-ROM (nibble and PS/2 mode). Everything else below is
-still the plan.
+as in the BackPack CD-ROM (nibble and PS/2 mode). Behind an OnSpec 90c26
+(nibble and 8-bit mode) it drives an ATAPI drive or a plain ATA hard disk:
+SCSI commands are translated to ATA (READ/WRITE/VERIFY SECTORS in LBA or
+CHS, INQUIRY and READ CAPACITY from IDENTIFY DEVICE, sense data from the
+error register). Everything else below is still the plan.
 
 `PORTASPI.SYS` is an ASPI manager (device `SCSIMGR$`) for DOS. It is meant
 to make old devices on the parallel port and the floppy controller
@@ -48,7 +52,8 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
 - PORTASPI finds the chip on its own. It tries the IMM first (it answers
   IEEE 1284.3 command packets), then the EPAT (the drive's task file must
   keep what is written to it), then the BackPack (units 0 to 7, which
-  answer with their address and its complement), then the PPA.
+  answer with their address and its complement), then the OnSpec 90c26
+  (its command packet answers B, 5, F on the status lines), then the PPA.
 - The EPAT is driven in nibble mode whatever `/M:` says. 86Box does not
   emulate its byte mode block reads or EPP, so they are not in yet. The
   BackPack runs in nibble or PS/2 mode; `/M:EPP` falls back to nibble,
@@ -74,6 +79,13 @@ LS-120 behind the EPAT (OpenASPI's `tests/dos_86box_ls120.sh LPT=1 MGR=`).
 `make test-bpck` boots with a BackPack CD-ROM: OpenASPI's `ASPICDA.SYS` and
 SHSUCDX read the CD and copy a file from it, which the host compares
 (`tests/dos_86box_bpck.sh`).
+`make test-on26` boots with an ATA hard disk behind an OnSpec 90c26:
+OpenASPI's `ASPIDSK.SYS` mounts its FAT16 partition, DOS reads and writes
+it and the host compares the files and checks the file system
+(`tests/dos_86box_on26.sh`, `LBA=0` for a CHS-only drive, `MB=` the size).
+86Box has no such device upstream; the model, `src/device/lpt_on26.c`, is
+on the `lpt-on26` branch of github.com/geosone/86Box, written from Linux's
+on26.c and the ATA standard.
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.

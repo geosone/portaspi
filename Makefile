@@ -5,7 +5,7 @@ OPENASPI ?= ../OpenAspi
 
 all: build/PORTASPI.SYS
 
-build/PORTASPI.SYS: src/portaspi.asm src/lpt.inc src/ppa.inc src/imm.inc src/epat.inc src/bpck.inc src/atapi.inc src/aspi.inc | build
+build/PORTASPI.SYS: src/portaspi.asm src/lpt.inc src/ppa.inc src/imm.inc src/epat.inc src/bpck.inc src/on26.inc src/ata.inc src/atapi.inc src/aspi.inc | build
 	$(NASM) $(NFLAGS) -Isrc/ -l build/portaspi.lst -o $@ $<
 
 build:
@@ -26,7 +26,11 @@ test-ls120: build/PORTASPI.SYS
 test-bpck: build/PORTASPI.SYS
 	OPENASPI=$(OPENASPI) MGROPT="$(if $(MODE),/M:$(MODE))" bash tests/dos_86box_bpck.sh
 
+# ATA hard disk behind an OnSpec 90c26 in 86Box (lpt-on26 branch): ASPIDSK
+test-on26: build/PORTASPI.SYS
+	OPENASPI=$(OPENASPI) MGROPT="$(if $(MODE),/M:$(MODE))" bash tests/dos_86box_on26.sh
+
 clean:
 	rm -rf build
 
-.PHONY: all test test-ls120 test-bpck clean
+.PHONY: all test test-ls120 test-bpck test-on26 clean

@@ -277,7 +277,7 @@ modesense_back:
 
 ;=============================================================================
 ; The ATAPI PACKET protocol on the task file behind a bridge chip (EPAT,
-; BPCK), as Linux paride's pf.c and pcd.c have it.  Only SCSI ID 0 exists:
+; BPCK, ON26), as Linux paride's pf.c and pcd.c have it.  Only SCSI ID 0 exists:
 ; the master drive behind the bridge.
 ;=============================================================================
 
@@ -304,14 +304,20 @@ tf_scratch      times 16 db 0
 br_connect:
         cmp     byte [lpt_chip], CHIP_BPCK
         je      bpck_connect
+        cmp     byte [lpt_chip], CHIP_ON26
+        je      on26_connect
         jmp     epat_connect
 
 br_disconnect:
         cmp     byte [lpt_chip], CHIP_BPCK
         je      bpck_disconnect
+        cmp     byte [lpt_chip], CHIP_ON26
+        je      on26_disconnect
         jmp     epat_disconnect
 
 tf_wr:  push    ax
+        cmp     byte [lpt_chip], CHIP_ON26
+        je      .o
         cmp     byte [lpt_chip], CHIP_BPCK
         je      .b
         add     ah, 18h                 ; epat.c cont_map[0]
@@ -322,9 +328,14 @@ tf_wr:  push    ax
         call    bpck_wr
         pop     ax
         ret
+.o:     call    on26_wr
+        pop     ax
+        ret
 
 tf_rd:  push    bx
         mov     bh, ah
+        cmp     byte [lpt_chip], CHIP_ON26
+        je      .o
         cmp     byte [lpt_chip], CHIP_BPCK
         je      .b
         add     ah, 18h
@@ -332,6 +343,8 @@ tf_rd:  push    bx
         jmp     .out
 .b:     add     ah, 40h
         call    bpck_rd
+        jmp     .out
+.o:     call    on26_rd
 .out:   mov     ah, bh
         pop     bx
         ret
@@ -339,11 +352,15 @@ tf_rd:  push    bx
 blk_get:
         cmp     byte [lpt_chip], CHIP_BPCK
         je      bpck_get
+        cmp     byte [lpt_chip], CHIP_ON26
+        je      on26_get
         jmp     epat_get
 
 blk_put:
         cmp     byte [lpt_chip], CHIP_BPCK
         je      bpck_put
+        cmp     byte [lpt_chip], CHIP_ON26
+        je      on26_put
         jmp     epat_put
 
 ; wait until the drive is not busy.  EBX = timeout in ticks.

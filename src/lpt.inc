@@ -9,6 +9,7 @@ CHIP_PPA        equ     0               ; Iomega PPA3 (ZIP 100), ppa.inc
 CHIP_IMM        equ     1               ; Iomega IMM (ZIP Plus, ZIP 250), imm.inc
 CHIP_EPAT       equ     2               ; Shuttle EPAT to ATAPI, epat.inc
 CHIP_BPCK       equ     3               ; Micro Solutions BackPack to ATAPI, bpck.inc
+CHIP_ON26       equ     4               ; OnSpec 90c26 to ATA or ATAPI, on26.inc
 
 BURST           equ     512             ; ppa.c PPA_BURST_SIZE, imm.c IMM_BURST_SIZE
 SEL_TICKS       equ     2               ; selection: at least one tick
@@ -198,6 +199,8 @@ norm_buf:
 ; The chip of the port
 ;-----------------------------------------------------------------------------
 dev_exec:
+        cmp     byte [dev_ata], 0       ; an ATA disk behind a bridge
+        jne     ata_exec
         cmp     byte [lpt_chip], CHIP_EPAT
         jae     atapi_exec
         cmp     byte [lpt_chip], CHIP_IMM
@@ -205,7 +208,10 @@ dev_exec:
         jmp     ppa_exec
 
 dev_bus_reset:
-        cmp     byte [lpt_chip], CHIP_EPAT
+        cmp     byte [dev_ata], 0       ; nothing to reset: no bus
+        je      .bus
+        ret
+.bus:   cmp     byte [lpt_chip], CHIP_EPAT
         jae     atapi_reset
         cmp     byte [lpt_chip], CHIP_IMM
         je      imm_bus_reset

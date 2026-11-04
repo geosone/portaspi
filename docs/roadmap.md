@@ -4,7 +4,9 @@
    done in nibble mode (PORTASPI 0.3)**, with ASPIFDD on the LS-120 tested
    in 86Box; byte mode and EPP wait for an emulator or hardware. **BPCK is
    done in nibble and PS/2 mode (0.4)**, with ASPICDA on the BackPack
-   CD-ROM tested in 86Box. Host
+   CD-ROM tested in 86Box. **ON26 with SCSI-to-ATA translation is done
+   (0.5)**: an ATA disk (or ATAPI drive) behind an OnSpec 90c26, tested
+   with ASPIDSK on an 86Box model of the chip (lpt-on26 branch). Host
    adapter inquiry, execute SCSI I/O, chaining; SPP, PS/2 and EPP modes;
    ATAPI packets pass through. Goal: `ASPIFDD.SYS` and `EXFAT.SYS` on the
    SuperDisk LS-120 parallel, `ASPICDA.SYS` on the BackPack CD-ROM. Both

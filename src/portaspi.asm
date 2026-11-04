@@ -38,7 +38,7 @@
 
 %include "aspi.inc"
 
-%define VERSION_STR '0.4'
+%define VERSION_STR '0.5'
 
 STACK_SIZE      equ     0800h           ; BIOS IRQ handlers run on it too
 NTARGET         equ     7               ; SCSI IDs 0..6, the adapter is 7
@@ -416,6 +416,8 @@ srb_exec:
         mov     byte [s_xlate], XL_NONE
         cmp     byte [lpt_chip], CHIP_EPAT
         jb      .go
+        cmp     byte [dev_ata], 0
+        jne     .go
         call    translate_cdb           ; ATAPI drive
         jnc     .xl
         jmp     .invalid
@@ -563,6 +565,8 @@ auto_sense:
 %include "imm.inc"
 %include "epat.inc"
 %include "bpck.inc"
+%include "on26.inc"
+%include "ata.inc"
 %include "atapi.inc"
 
 ;-----------------------------------------------------------------------------
@@ -583,6 +587,7 @@ opt_mode        db      0FFh            ; /M:, 0FFh: choose
 opt_quiet       db      0               ; /Q
 opt_verbose     db      0               ; /V
 inq_buf         times 36 db 0
+id_buf          times 512 db 0         ; IDENTIFY DEVICE data
 
 msg_banner      db      'PORTASPI ', VERSION_STR
                 db      ' - ASPI manager for parallel port devices', 13, 10, 0
@@ -595,6 +600,7 @@ msg_ppa         db      'h: Iomega PPA, ', 0
 msg_imm         db      'h: Iomega IMM, ', 0
 msg_epat        db      'h: Shuttle EPAT, ', 0
 msg_bpck        db      'h: Micro Solutions BackPack, ', 0
+msg_on26        db      'h: OnSpec 90c26, ', 0
 msg_mode_nib    db      'nibble mode', 13, 10, 0
 msg_mode_ps2    db      'PS/2 mode', 13, 10, 0
 msg_mode_epp    db      'EPP mode', 13, 10, 0
@@ -714,7 +720,13 @@ try_port:
         jne     .chip
         mov     byte [lpt_mode], MODE_NIBBLE
         jmp     .chip
-.ppa2:  mov     byte [lpt_chip], CHIP_PPA
+.ppa2:  call    on26_init               ; an ATA or ATAPI drive behind an OnSpec
+        jc      .ppa3
+        cmp     byte [lpt_mode], MODE_EPP       ; nibble or 8-bit so far
+        jne     .chip
+        mov     byte [lpt_mode], MODE_NIBBLE
+        jmp     .chip
+.ppa3:  mov     byte [lpt_chip], CHIP_PPA
         call    ppa_init
         jc      .none
 .chip:
@@ -826,11 +838,12 @@ set_ident:
         loop    .m
 .out:   ret
 
-id_chips        dw      id_ppa, id_imm, id_epat, id_bpck
+id_chips        dw      id_ppa, id_imm, id_epat, id_bpck, id_on26
 id_ppa          db      'PPA', 0
 id_imm          db      'IMM', 0
 id_epat         db      'EPAT', 0
 id_bpck         db      'BPCK', 0
+id_on26         db      'ON26', 0
 id_nibble       db      'nibble', 0
 id_ps2          db      'PS/2', 0
 id_epp          db      'EPP', 0
@@ -850,7 +863,10 @@ print_port:
 .chip2: cmp     byte [lpt_chip], CHIP_BPCK
         jne     .chip3
         mov     si, msg_bpck
-.chip3: call    print
+.chip3: cmp     byte [lpt_chip], CHIP_ON26
+        jne     .chip4
+        mov     si, msg_on26
+.chip4: call    print
         mov     si, msg_mode_nib
         cmp     byte [lpt_mode], MODE_PS2
         jne     .n1
