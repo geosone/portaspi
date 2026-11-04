@@ -175,6 +175,33 @@ translate_cdb:
 .fail:  stc
         ret
 
+; ATAPI CD/DVD drives report ANSI version 0 (or 5) in their INQUIRY data.
+; ASPICD.SYS only uses the standard SCSI-2 audio commands for drives of
+; unknown vendors that claim SCSI-2, so report version 2 for them (as
+; EUSBASPI and AHCIASPI do).
+inquiry_fixup:
+        cmp     byte [cdb_buf], SCSI_INQUIRY
+        jne     .out
+        test    byte [cdb_buf+1], 1     ; vital product data page
+        jnz     .out
+        cmp     dword [s_xfer], 3
+        jb      .out
+        push    es
+        push    di
+        les     di, [s_buf]
+        mov     al, [es:di]
+        and     al, 1Fh
+        cmp     al, 5                   ; CD/DVD device
+        jne     .pop
+        mov     al, [es:di+2]
+        and     al, 7
+        cmp     al, 2
+        je      .pop
+        mov     byte [es:di+2], 2
+.pop:   pop     di
+        pop     es
+.out:   ret
+
 ; build the MODE SELECT(10) parameter list in the bounce buffer
 ; CX = MODE SELECT(6) parameter list length (>= 4)
 modeselect_prepare:
@@ -246,4 +273,276 @@ modesense_back:
         rep     movsb
         pop     si
         pop     es
+        ret
+
+;=============================================================================
+; The ATAPI PACKET protocol on the task file behind a bridge chip (EPAT,
+; BPCK), as Linux paride's pf.c and pcd.c have it.  Only SCSI ID 0 exists:
+; the master drive behind the bridge.
+;=============================================================================
+
+; task file registers
+TF_DATA         equ     0
+TF_ERROR        equ     1               ; features on writes
+TF_IREASON      equ     2
+TF_BCLO         equ     4
+TF_BCHI         equ     5
+TF_DRVHD        equ     6
+TF_STATUS       equ     7               ; command on writes
+
+ATA_BSY         equ     80h
+ATA_DRQ         equ     08h
+ATA_ERR         equ     01h
+
+TF_CHUNK        equ     0F000h          ; at most this per block transfer
+
+tf_bc           dw      0               ; byte count of a DRQ block
+tf_scratch      times 16 db 0
+
+; the bridge: connect, disconnect, task file register AH (write AL, or
+; read into AL), CX bytes of the drive's data at ES:DI.  DX = base.
+br_connect:
+        cmp     byte [lpt_chip], CHIP_BPCK
+        je      bpck_connect
+        jmp     epat_connect
+
+br_disconnect:
+        cmp     byte [lpt_chip], CHIP_BPCK
+        je      bpck_disconnect
+        jmp     epat_disconnect
+
+tf_wr:  push    ax
+        cmp     byte [lpt_chip], CHIP_BPCK
+        je      .b
+        add     ah, 18h                 ; epat.c cont_map[0]
+        call    epat_wr
+        pop     ax
+        ret
+.b:     add     ah, 40h                 ; bpck.c cont_map[0]
+        call    bpck_wr
+        pop     ax
+        ret
+
+tf_rd:  push    bx
+        mov     bh, ah
+        cmp     byte [lpt_chip], CHIP_BPCK
+        je      .b
+        add     ah, 18h
+        call    epat_rd
+        jmp     .out
+.b:     add     ah, 40h
+        call    bpck_rd
+.out:   mov     ah, bh
+        pop     bx
+        ret
+
+blk_get:
+        cmp     byte [lpt_chip], CHIP_BPCK
+        je      bpck_get
+        jmp     epat_get
+
+blk_put:
+        cmp     byte [lpt_chip], CHIP_BPCK
+        je      bpck_put
+        jmp     epat_put
+
+; wait until the drive is not busy.  EBX = timeout in ticks.
+; -> AL = ATA status, CF on timeout
+atapi_wait:
+        push    esi
+        pushf
+        sti
+        call    get_ticks
+        mov     esi, eax
+.l:     mov     ah, TF_STATUS
+        call    tf_rd
+        test    al, ATA_BSY
+        jz      .ok
+        push    ax
+        call    get_ticks
+        sub     eax, esi
+        jns     .chk
+        call    get_ticks
+        mov     esi, eax
+        pop     ax
+        jmp     .l
+.chk:   cmp     eax, ebx
+        pop     ax
+        jbe     .l
+        popf
+        pop     esi
+        stc
+        ret
+.ok:    popf
+        pop     esi
+        clc
+        ret
+
+; SC_RESET_DEV: ATAPI DEVICE RESET
+atapi_reset:
+        mov     dx, [lpt_base]
+        call    br_connect
+        mov     ax, (TF_DRVHD << 8) | 0A0h
+        call    tf_wr
+        mov     ax, (TF_STATUS << 8) | 08h
+        call    tf_wr
+        mov     ebx, [tmo_ticks]
+        call    atapi_wait
+        call    br_disconnect
+        ret
+
+;-----------------------------------------------------------------------------
+; atapi_exec: the ATAPI packet cdb_buf (12 bytes) with the request of
+; dev_exec.  The drive's sense key comes back in x_err (error register).
+;-----------------------------------------------------------------------------
+atapi_exec:
+        push    bx
+        push    cx
+        push    dx
+        push    si
+        push    di
+        push    es
+        xor     eax, eax
+        mov     [x_xfer], eax
+        mov     [x_over], al
+        mov     [x_status], al
+        mov     [x_err], al
+        les     di, [x_buf]
+        call    norm_buf
+        mov     dx, [lpt_base]
+        cmp     byte [x_target], 0      ; only the master drive
+        je      .t0
+        mov     al, XR_NOSEL
+        jmp     .out
+.t0:    call    br_connect
+        mov     ax, (TF_DRVHD << 8) | 0A0h
+        call    tf_wr
+        mov     ebx, CMD_TICKS
+        call    atapi_wait
+        jc      .timeout
+        ; the byte count limit: the buffer, at most FFFEh, never 0
+        mov     eax, [x_len]
+        cmp     eax, 0FFFEh
+        jbe     .bc
+        mov     ax, 0FFFEh
+.bc:    or      ax, ax
+        jnz     .bc2
+        mov     ax, 2
+.bc2:   push    ax
+        mov     ax, TF_ERROR << 8       ; features: PIO
+        call    tf_wr
+        pop     cx
+        mov     ah, TF_BCLO
+        mov     al, cl
+        call    tf_wr
+        mov     ah, TF_BCHI
+        mov     al, ch
+        call    tf_wr
+        mov     ax, (TF_STATUS << 8) | 0A0h     ; PACKET
+        call    tf_wr
+        mov     ebx, CMD_TICKS
+        call    atapi_wait
+        jc      .timeout
+        test    al, ATA_ERR
+        jnz     .check
+        test    al, ATA_DRQ
+        jz      .phase
+        push    cs
+        pop     es
+        mov     di, cdb_buf
+        mov     cx, 12
+        call    blk_put
+
+        ; data blocks, each with its DRQ, until the command is done
+.drq:   mov     ebx, [tmo_ticks]
+        call    atapi_wait
+        jc      .timeout
+        test    al, ATA_DRQ
+        jz      .end
+        mov     ah, TF_IREASON
+        call    tf_rd
+        test    al, 01h                 ; C/D: a packet again?
+        jnz     .phase
+        mov     bl, 2                   ; out
+        test    al, 02h
+        jz      .dir
+        mov     bl, 1                   ; in
+.dir:   mov     ah, TF_BCLO
+        call    tf_rd
+        mov     cl, al
+        mov     ah, TF_BCHI
+        call    tf_rd
+        mov     ch, al
+        or      cx, cx
+        jz      .phase
+        mov     [tf_bc], cx
+.blk:   ; the part that fits the client buffer
+        cmp     byte [x_dir], 0
+        je      .dirok
+        cmp     [x_dir], bl
+        jne     .drain
+.dirok: mov     eax, [x_len]
+        or      eax, eax
+        jz      .drain
+        movzx   ecx, word [tf_bc]
+        cmp     eax, ecx
+        jae     .c1
+        mov     cx, ax
+.c1:    cmp     cx, TF_CHUNK
+        jbe     .c2
+        mov     cx, TF_CHUNK
+.c2:    mov     [x_take], cx
+        sub     [tf_bc], cx
+        les     di, [x_buf]
+        call    .move
+        call    xfer_done
+        cmp     word [tf_bc], 0
+        jne     .blk
+        jmp     .drq
+.drain: ; beyond the buffer, or the other way: zeros out, bytes in dropped
+        mov     byte [x_over], 1
+        mov     cx, 16
+        cmp     [tf_bc], cx
+        jae     .d1
+        mov     cx, [tf_bc]
+.d1:    sub     [tf_bc], cx
+        push    cs
+        pop     es
+        mov     di, tf_scratch
+        push    di
+        push    cx
+        xor     al, al
+        rep     stosb
+        pop     cx
+        pop     di
+        call    .move
+        cmp     word [tf_bc], 0
+        jne     .drain
+        jmp     .drq
+
+.move:  cmp     bl, 2
+        je      blk_put
+        jmp     blk_get
+
+.end:   test    al, ATA_ERR
+        jz      .done
+.check: mov     ah, TF_ERROR
+        call    tf_rd
+        mov     [x_err], al
+        mov     byte [x_status], STATUS_CHKCOND
+.done:  call    br_disconnect
+        mov     al, XR_OK
+        jmp     .out
+.timeout:
+        call    br_disconnect
+        mov     al, XR_TIMEOUT
+        jmp     .out
+.phase: call    br_disconnect
+        mov     al, XR_HBA
+.out:   pop     es
+        pop     di
+        pop     si
+        pop     dx
+        pop     cx
+        pop     bx
         ret

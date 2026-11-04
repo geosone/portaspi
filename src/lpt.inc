@@ -8,6 +8,7 @@
 CHIP_PPA        equ     0               ; Iomega PPA3 (ZIP 100), ppa.inc
 CHIP_IMM        equ     1               ; Iomega IMM (ZIP Plus, ZIP 250), imm.inc
 CHIP_EPAT       equ     2               ; Shuttle EPAT to ATAPI, epat.inc
+CHIP_BPCK       equ     3               ; Micro Solutions BackPack to ATAPI, bpck.inc
 
 BURST           equ     512             ; ppa.c PPA_BURST_SIZE, imm.c IMM_BURST_SIZE
 SEL_TICKS       equ     2               ; selection: at least one tick
@@ -198,14 +199,14 @@ norm_buf:
 ;-----------------------------------------------------------------------------
 dev_exec:
         cmp     byte [lpt_chip], CHIP_EPAT
-        je      epat_exec
+        jae     atapi_exec
         cmp     byte [lpt_chip], CHIP_IMM
         je      imm_exec
         jmp     ppa_exec
 
 dev_bus_reset:
         cmp     byte [lpt_chip], CHIP_EPAT
-        je      epat_reset
+        jae     atapi_reset
         cmp     byte [lpt_chip], CHIP_IMM
         je      imm_bus_reset
         jmp     ppa_bus_reset

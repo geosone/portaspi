@@ -5,7 +5,8 @@
 ; This version knows Iomega's chips: the PPA3 of the ZIP 100 parallel port
 ; drive (ppa.inc) and the IMM of the ZIP Plus and ZIP 250 (imm.inc); and
 ; the Shuttle EPAT bridge to an ATAPI drive, as in the parallel port
-; SuperDisk LS-120 (epat.inc, atapi.inc).  It works alone or together with other ASPI
+; SuperDisk LS-120 (epat.inc), and the Micro Solutions BackPack bridge, as
+; in the BackPack CD-ROM (bpck.inc); ATAPI on both in atapi.inc.  It works alone or together with other ASPI
 ; managers: it chains to a manager loaded before it, and managers loaded
 ; after it can chain to it.
 ;
@@ -37,7 +38,7 @@
 
 %include "aspi.inc"
 
-%define VERSION_STR '0.3'
+%define VERSION_STR '0.4'
 
 STACK_SIZE      equ     0800h           ; BIOS IRQ handlers run on it too
 NTARGET         equ     7               ; SCSI IDs 0..6, the adapter is 7
@@ -463,7 +464,10 @@ srb_exec:
 .good:  cmp     byte [s_xlate], XL_MODESENSE
         jne     .nomsb
         call    modesense_back
-.nomsb: mov     byte [es:si+SRB_Status], SS_COMP
+.nomsb: cmp     byte [lpt_chip], CHIP_EPAT
+        jb      .noinq
+        call    inquiry_fixup
+.noinq: mov     byte [es:si+SRB_Status], SS_COMP
         call    exec_extras
         jmp     call_post
 .hba_err:
@@ -558,6 +562,7 @@ auto_sense:
 %include "ppa.inc"
 %include "imm.inc"
 %include "epat.inc"
+%include "bpck.inc"
 %include "atapi.inc"
 
 ;-----------------------------------------------------------------------------
@@ -589,6 +594,7 @@ msg_port        db      '  port ', 0
 msg_ppa         db      'h: Iomega PPA, ', 0
 msg_imm         db      'h: Iomega IMM, ', 0
 msg_epat        db      'h: Shuttle EPAT, ', 0
+msg_bpck        db      'h: Micro Solutions BackPack, ', 0
 msg_mode_nib    db      'nibble mode', 13, 10, 0
 msg_mode_ps2    db      'PS/2 mode', 13, 10, 0
 msg_mode_epp    db      'EPP mode', 13, 10, 0
@@ -701,7 +707,14 @@ try_port:
         jc      .ppa
         mov     byte [lpt_mode], MODE_NIBBLE    ; the only EPAT mode so far
         jmp     .chip
-.ppa:   mov     byte [lpt_chip], CHIP_PPA
+.ppa:   mov     byte [lpt_chip], CHIP_BPCK
+        call    bpck_init               ; an ATAPI drive behind a BackPack
+        jc      .ppa2
+        cmp     byte [lpt_mode], MODE_EPP       ; nibble or PS/2 so far
+        jne     .chip
+        mov     byte [lpt_mode], MODE_NIBBLE
+        jmp     .chip
+.ppa2:  mov     byte [lpt_chip], CHIP_PPA
         call    ppa_init
         jc      .none
 .chip:
@@ -813,10 +826,11 @@ set_ident:
         loop    .m
 .out:   ret
 
-id_chips        dw      id_ppa, id_imm, id_epat
+id_chips        dw      id_ppa, id_imm, id_epat, id_bpck
 id_ppa          db      'PPA', 0
 id_imm          db      'IMM', 0
 id_epat         db      'EPAT', 0
+id_bpck         db      'BPCK', 0
 id_nibble       db      'nibble', 0
 id_ps2          db      'PS/2', 0
 id_epp          db      'EPP', 0
@@ -833,7 +847,10 @@ print_port:
 .chip:  cmp     byte [lpt_chip], CHIP_EPAT
         jne     .chip2
         mov     si, msg_epat
-.chip2: call    print
+.chip2: cmp     byte [lpt_chip], CHIP_BPCK
+        jne     .chip3
+        mov     si, msg_bpck
+.chip3: call    print
         mov     si, msg_mode_nib
         cmp     byte [lpt_mode], MODE_PS2
         jne     .n1

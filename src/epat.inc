@@ -4,8 +4,7 @@
 ;
 ; The chip sequences are those of Linux drivers/block/paride/epat.c (Grant
 ; Guenther), mode 0: register and block reads in nibbles, writes in bytes.
-; The ATAPI protocol on the task file behind it follows paride's pf.c.
-; Only SCSI ID 0 exists: the master drive behind the bridge.
+; The ATAPI protocol behind it is atapi_exec (atapi.inc).
 ;
 ; License: GNU General Public License version 2 only.
 ;=============================================================================
@@ -20,14 +19,7 @@ EP_DRVHD        equ     1Eh
 EP_STATUS       equ     1Fh             ; command on writes
 EP_DEVCTL       equ     16h
 
-ATA_BSY         equ     80h
-ATA_DRQ         equ     08h
-ATA_ERR         equ     01h
 
-EP_CHUNK        equ     0F000h          ; at most this per block transfer
-
-ep_bc           dw      0               ; byte count of a DRQ block
-ep_scratch      times 16 db 0
 
 ;-----------------------------------------------------------------------------
 ; Bridge access (DX = base)
@@ -185,38 +177,6 @@ epat_put:
         pop     bx
         ret
 
-; wait until the drive is not busy.  EBX = timeout in ticks.
-; -> AL = ATA status, CF on timeout
-epat_wait:
-        push    esi
-        pushf
-        sti
-        call    get_ticks
-        mov     esi, eax
-.l:     mov     ah, EP_STATUS
-        call    epat_rd
-        test    al, ATA_BSY
-        jz      .ok
-        push    ax
-        call    get_ticks
-        sub     eax, esi
-        jns     .chk
-        call    get_ticks
-        mov     esi, eax
-        pop     ax
-        jmp     .l
-.chk:   cmp     eax, ebx
-        pop     ax
-        jbe     .l
-        popf
-        pop     esi
-        stc
-        ret
-.ok:    popf
-        pop     esi
-        clc
-        ret
-
 ;-----------------------------------------------------------------------------
 ; epat_init: an EPAT with a drive on lpt_base?  As epat_test_proto(): the
 ; drive's task file must keep what is written to it.  CF if not.
@@ -250,171 +210,3 @@ epat_init:
         cmc                             ; CF if any value was lost
         ret
 
-; SC_RESET_DEV: ATAPI DEVICE RESET
-epat_reset:
-        mov     dx, [lpt_base]
-        call    epat_connect
-        mov     ax, (EP_DRVHD << 8) | 0A0h
-        call    epat_wr
-        mov     ax, (EP_STATUS << 8) | 08h
-        call    epat_wr
-        mov     ebx, [tmo_ticks]
-        call    epat_wait
-        call    epat_disconnect
-        ret
-
-;-----------------------------------------------------------------------------
-; epat_exec: the ATAPI packet cdb_buf (12 bytes) with the request of
-; dev_exec.  The drive's sense key comes back in x_err (error register).
-;-----------------------------------------------------------------------------
-epat_exec:
-        push    bx
-        push    cx
-        push    dx
-        push    si
-        push    di
-        push    es
-        xor     eax, eax
-        mov     [x_xfer], eax
-        mov     [x_over], al
-        mov     [x_status], al
-        mov     [x_err], al
-        les     di, [x_buf]
-        call    norm_buf
-        mov     dx, [lpt_base]
-        cmp     byte [x_target], 0      ; only the master drive
-        je      .t0
-        mov     al, XR_NOSEL
-        jmp     .out
-.t0:    call    epat_connect
-        mov     ax, (EP_DRVHD << 8) | 0A0h
-        call    epat_wr
-        mov     ebx, CMD_TICKS
-        call    epat_wait
-        jc      .timeout
-        ; the byte count limit: the buffer, at most FFFEh, never 0
-        mov     eax, [x_len]
-        cmp     eax, 0FFFEh
-        jbe     .bc
-        mov     ax, 0FFFEh
-.bc:    or      ax, ax
-        jnz     .bc2
-        mov     ax, 2
-.bc2:   push    ax
-        mov     ax, EP_ERROR << 8       ; features: PIO
-        call    epat_wr
-        pop     cx
-        mov     ah, EP_BCLO
-        mov     al, cl
-        call    epat_wr
-        mov     ah, EP_BCHI
-        mov     al, ch
-        call    epat_wr
-        mov     ax, (EP_STATUS << 8) | 0A0h     ; PACKET
-        call    epat_wr
-        mov     ebx, CMD_TICKS
-        call    epat_wait
-        jc      .timeout
-        test    al, ATA_ERR
-        jnz     .check
-        test    al, ATA_DRQ
-        jz      .phase
-        push    cs
-        pop     es
-        mov     di, cdb_buf
-        mov     cx, 12
-        call    epat_put
-
-        ; data blocks, each with its DRQ, until the command is done
-.drq:   mov     ebx, [tmo_ticks]
-        call    epat_wait
-        jc      .timeout
-        test    al, ATA_DRQ
-        jz      .end
-        mov     ah, EP_IREASON
-        call    epat_rd
-        test    al, 01h                 ; C/D: a packet again?
-        jnz     .phase
-        mov     bl, 2                   ; out
-        test    al, 02h
-        jz      .dir
-        mov     bl, 1                   ; in
-.dir:   mov     ah, EP_BCLO
-        call    epat_rd
-        mov     cl, al
-        mov     ah, EP_BCHI
-        call    epat_rd
-        mov     ch, al
-        or      cx, cx
-        jz      .phase
-        mov     [ep_bc], cx
-.blk:   ; the part that fits the client buffer
-        cmp     byte [x_dir], 0
-        je      .dirok
-        cmp     [x_dir], bl
-        jne     .drain
-.dirok: mov     eax, [x_len]
-        or      eax, eax
-        jz      .drain
-        movzx   ecx, word [ep_bc]
-        cmp     eax, ecx
-        jae     .c1
-        mov     cx, ax
-.c1:    cmp     cx, EP_CHUNK
-        jbe     .c2
-        mov     cx, EP_CHUNK
-.c2:    mov     [x_take], cx
-        sub     [ep_bc], cx
-        les     di, [x_buf]
-        call    .move
-        call    xfer_done
-        cmp     word [ep_bc], 0
-        jne     .blk
-        jmp     .drq
-.drain: ; beyond the buffer, or the other way: zeros out, bytes in dropped
-        mov     byte [x_over], 1
-        mov     cx, 16
-        cmp     [ep_bc], cx
-        jae     .d1
-        mov     cx, [ep_bc]
-.d1:    sub     [ep_bc], cx
-        push    cs
-        pop     es
-        mov     di, ep_scratch
-        push    di
-        push    cx
-        xor     al, al
-        rep     stosb
-        pop     cx
-        pop     di
-        call    .move
-        cmp     word [ep_bc], 0
-        jne     .drain
-        jmp     .drq
-
-.move:  cmp     bl, 2
-        je      epat_put
-        jmp     epat_get
-
-.end:   test    al, ATA_ERR
-        jz      .done
-.check: mov     ah, EP_ERROR
-        call    epat_rd
-        mov     [x_err], al
-        mov     byte [x_status], STATUS_CHKCOND
-.done:  call    epat_disconnect
-        mov     al, XR_OK
-        jmp     .out
-.timeout:
-        call    epat_disconnect
-        mov     al, XR_TIMEOUT
-        jmp     .out
-.phase: call    epat_disconnect
-        mov     al, XR_HBA
-.out:   pop     es
-        pop     di
-        pop     si
-        pop     dx
-        pop     cx
-        pop     bx
-        ret

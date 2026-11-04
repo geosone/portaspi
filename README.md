@@ -1,11 +1,12 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
-**Status: ZIP drives and the LS-120.** `PORTASPI.SYS` 0.3 drives Iomega's
-parallel port ZIP drives in nibble, PS/2 and EPP mode: the ZIP 100 (PPA
-chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives an ATAPI
-drive behind a Shuttle EPAT bridge, such as the parallel port SuperDisk
-LS-120, so far in nibble mode only. Everything else below is still the
-plan.
+**Status: ZIP drives, LS-120 and BackPack CD-ROM.** `PORTASPI.SYS` 0.4
+drives Iomega's parallel port ZIP drives in nibble, PS/2 and EPP mode: the
+ZIP 100 (PPA chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives
+ATAPI drives behind two bridges: the Shuttle EPAT, as in the parallel port
+SuperDisk LS-120 (nibble mode so far), and the Micro Solutions BackPack,
+as in the BackPack CD-ROM (nibble and PS/2 mode). Everything else below is
+still the plan.
 
 `PORTASPI.SYS` is an ASPI manager (device `SCSIMGR$`) for DOS. It is meant
 to make old devices on the parallel port and the floppy controller
@@ -46,10 +47,14 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
 - `/T:` the command timeout in seconds (default 15).
 - PORTASPI finds the chip on its own. It tries the IMM first (it answers
   IEEE 1284.3 command packets), then the EPAT (the drive's task file must
-  keep what is written to it), then the PPA.
+  keep what is written to it), then the BackPack (units 0 to 7, which
+  answer with their address and its complement), then the PPA.
 - The EPAT is driven in nibble mode whatever `/M:` says. 86Box does not
   emulate its byte mode block reads or EPP, so they are not in yet. The
-  ATAPI drive behind it is target 0. MODE SENSE(6)/SELECT(6), READ(6),
+  BackPack runs in nibble or PS/2 mode; `/M:EPP` falls back to nibble,
+  because Linux's EPP register access is not what 86Box's model (written
+  from the vendor's driver) takes. The ATAPI drive behind a bridge is
+  target 0. MODE SENSE(6)/SELECT(6), READ(6),
   WRITE(6), SEEK(6) and REZERO UNIT are rewritten into the 10-byte commands
   for it, as AHCIASPI and EUSBASPI do.
 - The ASPI adapter name shows the chip, port and mode, for example
@@ -66,6 +71,9 @@ PORTASPI and OpenASPI's `ASPIFDD.SYS`, then copies files on the cartridge,
 also with `VERIFY ON`. The image is then checked on the host. `ZIP250=1`
 takes the ZIP 250 (IMM) instead. `make test-ls120` does the same with an
 LS-120 behind the EPAT (OpenASPI's `tests/dos_86box_ls120.sh LPT=1 MGR=`).
+`make test-bpck` boots with a BackPack CD-ROM: OpenASPI's `ASPICDA.SYS` and
+SHSUCDX read the CD and copy a file from it, which the host compares
+(`tests/dos_86box_bpck.sh`).
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.
