@@ -13,6 +13,9 @@
 # epia, frpw (Freecom Power) or friq (Freecom IQ); ORIG= Freecom's
 # POWER-CD.SYS (IQ) or its older G735.SYS (Power) with BPOPT=/D:FCCD001
 # and ORIGDEV=FCCD001 for those.
+# MSCDEX=path: Microsoft's MSCDEX.EXE (not shipped) as the redirector
+# instead of SHSUCDX. BPCDDRV.SYS 2.13 needs it: with SHSUCDX it reads
+# sector 80000058h for 58h and fails.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OPENASPI=${OPENASPI:-$ROOT/../OpenAspi}
@@ -24,6 +27,7 @@ MGROPT=${MGROPT:-}
 ORIG=${ORIG:-}
 BPOPT=${BPOPT:-}
 ORIGDEV=${ORIGDEV:-BPCDDRV\$}
+MSCDEX=${MSCDEX:-}
 BRIDGE=${BRIDGE:-bpck}
 OUT=${OUT:-$ROOT/build/86box-bpck}
 test -x "$BOX"
@@ -67,10 +71,12 @@ else
     printf 'DEVICE=PORTASPI.SYS /V %s\r\nDEVICE=ASPICDA.SYS /D:ASPICDA0 /V\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
         "$MGROPT" > "$OUT/CONFIG.SYS"
 fi
+REDIR="SHSUCDX /D:$CDDEV,R > AUX"
+[ -z "$MSCDEX" ] || REDIR="MSCDEX /D:$CDDEV /L:R > AUX"
 cat > "$OUT/AUTOEXEC.BAT" <<BAT
 @ECHO OFF
 ASPISCAN > AUX
-SHSUCDX /D:$CDDEV,R > AUX
+$REDIR
 TYPE R:\README.TXT > AUX
 COPY R:\SUB\BIG.BIN A:\CDBIG.BIN > AUX
 IF NOT EXIST A:\CDBIG.BIN ECHO PORTASPI BPCK copy FAILED > AUX
@@ -86,6 +92,7 @@ else
     mcopy -o -i "$OUT/boot.img" "$MGR" ::/PORTASPI.SYS
 fi
 mcopy -o -i "$OUT/boot.img" "$OPENASPI/build/dos/ASPISCAN.COM" ::/
+[ -z "$MSCDEX" ] || mcopy -o -i "$OUT/boot.img" "$MSCDEX" ::/MSCDEX.EXE
 ROOT=$OPENASPI
 source "$OPENASPI/tests/86box_run.sh"
 run_86box_dos --done 'PORTASPI BPCK DONE' \
