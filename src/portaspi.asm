@@ -719,7 +719,7 @@ try_port:
         jnc     .chip
         mov     [lpt_mode], al
 .ppa:   mov     byte [lpt_chip], CHIP_BPCK
-        call    bpck_init               ; an ATAPI drive behind a BackPack
+        call    bpck_init               ; an ATA or ATAPI drive behind a BackPack
         jc      .ppa2
         cmp     byte [lpt_mode], MODE_EPP       ; nibble or PS/2 so far
         jne     .chip

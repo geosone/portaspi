@@ -1,14 +1,15 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
-**Status: ZIP drives, LS-120, BackPack CD-ROM, OnSpec, EPAT and EPIA hard disks.**
+**Status: ZIP drives, LS-120, BackPack CD-ROM, OnSpec, EPAT, EPIA and BackPack hard disks.**
 `PORTASPI.SYS` 0.5
 drives Iomega's parallel port ZIP drives in nibble, PS/2 and EPP mode: the
 ZIP 100 (PPA chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives
 ATAPI drives behind two bridges: the Shuttle EPAT, as in the parallel port
 SuperDisk LS-120 (nibble mode so far), and the Micro Solutions BackPack,
 as in the BackPack CD-ROM (nibble and PS/2 mode). Behind an OnSpec 90c26
-(nibble and 8-bit mode), a Shuttle EPAT (nibble mode) and a Shuttle EPIA
-(nibble and PS/2 mode) it drives an ATAPI drive or a plain ATA hard disk:
+(nibble and 8-bit mode), a Shuttle EPAT (nibble mode), a Shuttle EPIA
+(nibble and PS/2 mode) and the BackPack (the BackPack hard drive) it drives
+an ATAPI drive or a plain ATA hard disk:
 SCSI commands are translated to ATA (READ/WRITE/VERIFY SECTORS in LBA or
 CHS, INQUIRY and READ CAPACITY from IDENTIFY DEVICE, sense data from the
 error register). Everything else below is still the plan.
@@ -90,12 +91,14 @@ it and the host compares the files and checks the file system
 (`tests/dos_86box_on26.sh`, `LBA=0` for a CHS-only drive, `MB=` the size).
 86Box has no such device upstream; the model, `src/device/lpt_on26.c`, is
 on the `lpt-on26` branch of github.com/geosone/86Box, written from Linux's
-on26.c and the ATA standard. `BRIDGE=epat` and `BRIDGE=epia` put the disk
-behind a Shuttle EPAT or EPIA instead (`lpt-epat-hdd` branch; the EPIA
-model is `src/device/lpt_epia.c`, from Linux's epia.c). `ORIG=` runs a
+on26.c and the ATA standard. `BRIDGE=epat`, `BRIDGE=epia` and
+`BRIDGE=bpck` put the disk behind a Shuttle EPAT or EPIA or a BackPack
+instead (`lpt-epat-hdd` branch; the EPIA model is `src/device/lpt_epia.c`,
+from Linux's epia.c). `ORIG=` runs a
 vendor driver against the model, `ORIGDSK=` the block driver after it:
 ValuStor's VSMOBILE.SYS and OnSpec's EGIDE100.SYS (90c26), Shuttle's
-EPATHD.SYS and EPIAHD.SYS with ASPIDSK or Shuttle's ASPIHDRM.SYS.
+EPATHD.SYS and EPIAHD.SYS with ASPIDSK or Shuttle's ASPIHDRM.SYS, and
+Micro Solutions' BPHDDRV.SYS (2002) on the BackPack.
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.

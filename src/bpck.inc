@@ -228,7 +228,9 @@ bpck_put:
 ; 7, but a unit only counts when its two address readings are
 ; complements (AUTOFD set: the unit, clear: its complement, in status bits
 ; 5-3).  Then the drive's task file must keep what is written to it, as
-; for the EPAT.  CF if there is none.
+; for the EPAT, and the signature (or IDENTIFY DEVICE) tells an ATAPI
+; drive from an ATA disk (the BackPack hard drive).  CF if there is none.
+; -> dev_ata: 1 for an ATA disk, 0 for an ATAPI drive
 ;-----------------------------------------------------------------------------
 bpck_init:
         mov     dx, [lpt_base]
@@ -302,7 +304,31 @@ bpck_init:
 .same:  add     bl, 13
         cmp     bl, 13 * 19
         jb      .t
-        call    bpck_disconnect
-        cmp     cx, 1
-        cmc
+        cmp     cx, 0
+        jne     .gone                   ; a value was lost
+        mov     ax, (TF_DRVHD << 8) | 0A0h
+        call    tf_wr
+        mov     ebx, 18 * 20            ; 20 s for the drive to spin up
+        call    atapi_wait
+        jc      .gone
+        cmp     al, 0FFh                ; nothing on the IDE bus
+        je      .gone
+        mov     ah, TF_BCLO             ; the signature: 14h EBh is ATAPI
+        call    tf_rd
+        mov     bl, al
+        mov     ah, TF_BCHI
+        call    tf_rd
+        mov     bh, al
+        mov     byte [dev_ata], 0
+        cmp     bx, 0EB14h
+        je      .ok
+        mov     byte [dev_ata], 1
+        call    ata_probe               ; IDENTIFY DEVICE
+        jnc     .ok
+        mov     byte [dev_ata], 0       ; refused: an ATAPI drive after all
+.ok:    call    bpck_disconnect
+        clc
+        ret
+.gone:  call    bpck_disconnect
+        stc
         ret

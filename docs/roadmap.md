@@ -9,7 +9,8 @@
    with ASPIDSK on an 86Box model of the chip (lpt-on26 branch). **ATA
    disks behind the EPAT (nibble) and the EPIA (nibble and PS/2) are
    done**, on 86Box models checked with Shuttle's EPATHD.SYS and
-   EPIAHD.SYS (lpt-epat-hdd branch). Host
+   EPIAHD.SYS (lpt-epat-hdd branch), and so is the BackPack hard drive
+   (checked with Micro Solutions' BPHDDRV.SYS). Host
    adapter inquiry, execute SCSI I/O, chaining; SPP, PS/2 and EPP modes;
    ATAPI packets pass through. Goal: `ASPIFDD.SYS` and `EXFAT.SYS` on the
    SuperDisk LS-120 parallel, `ASPICDA.SYS` on the BackPack CD-ROM. Both
