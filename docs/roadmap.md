@@ -6,9 +6,10 @@
    SuperDisk LS-120 parallel, `ASPICDA.SYS` on the BackPack CD-ROM. Both
    are emulated by 86Box, so this step can be tested automatically.
 2. **The ZIP drives** (PPA, IMM): SCSI over the port. Both are emulated
-   by 86Box master: the ZIP 100 (PPA) and the ZIP 250 (IMM). **Done for the
-   ZIP 100 (PPA, PORTASPI 0.1)**, tested in 86Box in all three port modes;
-   it came first, because the drive needs no translation. Then the remaining paride
+   by 86Box master: the ZIP 100 (PPA) and the ZIP 250 (IMM). **Done: the ZIP 100
+   (PPA, PORTASPI 0.1) and the ZIP 250 (IMM, 0.2)**, both tested in 86Box in
+   all three port modes; they came first, because the drives need no
+   translation. Then the remaining paride
    protocols (FRPW/FRIQ, ON20/26 and the rest) and ATA disks with the
    SCSI-to-ATA translation.
 3. **Floppy tape, reading**: QIC-117 on the floppy controller and on

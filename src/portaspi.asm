@@ -2,14 +2,15 @@
 ; PORTASPI.SYS - ASPI manager for parallel port devices
 ;
 ; ASPI manager (SCSIMGR$) for SCSI devices behind a parallel port chip.
-; This version knows one chip: the Iomega PPA3 of the ZIP 100 parallel
-; port drive (ppa.inc).  It works alone or together with other ASPI
+; This version knows Iomega's chips: the PPA3 of the ZIP 100 parallel port
+; drive (ppa.inc) and the IMM of the ZIP Plus and ZIP 250 (imm.inc).  It works alone or together with other ASPI
 ; managers: it chains to a manager loaded before it, and managers loaded
 ; after it can chain to it.
 ;
 ; The ASPI layer is taken from EUSBASPI.SYS; its author licenses it for
 ; PORTASPI under the GPL version 2 as well.  The PPA protocol follows
-; Linux drivers/scsi/ppa.c (Grant Guenther, David Campbell, Tim Waugh).
+; Linux drivers/scsi/ppa.c and imm.c (Grant Guenther, David Campbell, Tim
+; Waugh).
 ;
 ; Build:  nasm -f bin -Isrc/ -o PORTASPI.SYS src/portaspi.asm
 ;
@@ -34,7 +35,7 @@
 
 %include "aspi.inc"
 
-%define VERSION_STR '0.1'
+%define VERSION_STR '0.2'
 
 STACK_SIZE      equ     0800h           ; BIOS IRQ handlers run on it too
 NTARGET         equ     7               ; SCSI IDs 0..6, the adapter is 7
@@ -333,7 +334,7 @@ srb_disk_info:
 srb_reset:
         call    find_dev
         jc      .out
-        call    ppa_bus_reset
+        call    dev_bus_reset
         les     si, [srb_ptr]
         mov     word [es:si+SRB_HaStat], 0      ; HaStat, TargStat
         mov     byte [es:si+SRB_Status], SS_COMP
@@ -403,7 +404,7 @@ srb_exec:
 .dirset:
         mov     [s_dir], ah
         mov     [x_dir], ah
-        call    ppa_exec
+        call    dev_exec
         les     si, [srb_ptr]
         push    eax
         mov     eax, [x_xfer]
@@ -490,7 +491,7 @@ auto_sense:
         mov     byte [cdb_len], 6
         mov     byte [x_dir], 1
         push    di
-        call    ppa_exec
+        call    dev_exec
         pop     di
         les     si, [srb_ptr]
         cmp     al, XR_OK
@@ -504,7 +505,9 @@ auto_sense:
         mov     byte [es:di+7], 0Ah
 .out:   ret
 
+%include "lpt.inc"
 %include "ppa.inc"
+%include "imm.inc"
 
 ;-----------------------------------------------------------------------------
 ; Stack
@@ -533,6 +536,7 @@ msg_not_inst    db      'PORTASPI not installed', 13, 10, 0
 msg_bad_opt     db      'PORTASPI: unknown option ignored', 13, 10, 0
 msg_port        db      '  port ', 0
 msg_ppa         db      'h: Iomega PPA, ', 0
+msg_imm         db      'h: Iomega IMM, ', 0
 msg_mode_nib    db      'nibble mode', 13, 10, 0
 msg_mode_ps2    db      'PS/2 mode', 13, 10, 0
 msg_mode_epp    db      'EPP mode', 13, 10, 0
@@ -637,8 +641,13 @@ init_out:
 try_port:
         mov     [lpt_base], ax
         call    port_setup              ; mode, ECR
+        mov     byte [lpt_chip], CHIP_IMM
+        call    imm_init                ; the IMM answers command packets
+        jnc     .chip
+        mov     byte [lpt_chip], CHIP_PPA
         call    ppa_init
         jc      .none
+.chip:
         xor     bx, bx                  ; INQUIRY on every SCSI ID
         xor     cx, cx                  ; drives found
 .id:    mov     byte [dev_type+bx], 0FFh
@@ -686,7 +695,7 @@ inquire:
         mov     byte [cdb_buf], SCSI_INQUIRY
         mov     byte [cdb_buf+4], 36
         mov     byte [cdb_len], 6
-        call    ppa_exec
+        call    dev_exec
         pop     cx
         pop     bx
         cmp     al, XR_OK
@@ -704,7 +713,13 @@ inquire:
 set_ident:
         push    cs
         pop     es
-        mov     di, ha_ident+4
+        mov     di, ha_ident
+        mov     si, id_ppa
+        cmp     byte [lpt_chip], CHIP_IMM
+        jne     .chip
+        mov     si, id_imm
+.chip:  movsw
+        movsw
         mov     ax, [lpt_base]
         mov     cx, 4
 .hex:   rol     ax, 4
@@ -729,6 +744,8 @@ set_ident:
         rep     movsb
         ret
 
+id_ppa          db      'PPA '
+id_imm          db      'IMM '
 id_nibble       db      'nibble '
 id_ps2          db      'PS/2   '
 id_epp          db      'EPP    '
@@ -739,7 +756,10 @@ print_port:
         mov     ax, [lpt_base]
         call    print_hex16
         mov     si, msg_ppa
-        call    print
+        cmp     byte [lpt_chip], CHIP_IMM
+        jne     .chip
+        mov     si, msg_imm
+.chip:  call    print
         mov     si, msg_mode_nib
         cmp     byte [lpt_mode], MODE_PS2
         jne     .n1
