@@ -13,7 +13,8 @@
 # 86Box model; ORIGOPT: its options. When ORIG is an ASPI manager (Shuttle's
 # EPATHD.SYS), ORIGDSK names the block driver after it: ASPIDSK for
 # OpenASPI's, or a path (Shuttle's ASPIHDRM.SYS); ORIGDSKOPT: its options.
-# BRIDGE: the bridge of the disk on LPT1, on26 or epat (Shuttle EPAT).
+# BRIDGE: the bridge of the disk on LPT1, on26, epat (Shuttle EPAT) or
+# epia (Shuttle EPIA).
 # The FAT16 file system is laid out as DOS FORMAT does (1 reserved sector,
 # 63 hidden, 16 heads of 63 sectors): Shuttle's ASPIHDRM.SYS counts on it.
 set -euo pipefail
@@ -112,7 +113,11 @@ cmp "$OUT/BIG.BIN" "$OUT/PLAIN.BIN"
 cmp "$OUT/BIG.BIN" "$OUT/VERIFY.BIN"
 dd if="$OUT/hd.img" of="$OUT/part.img" bs=512 skip=63 status=none
 fsck.fat -vn "$OUT/part.img" > "$OUT/fsck.log"
-case "$BRIDGE" in epat) NAME="Shuttle EPAT" ;; *) NAME="OnSpec 90c26" ;; esac
+case "$BRIDGE" in
+    epat) NAME="Shuttle EPAT" ;;
+    epia) NAME="Shuttle EPIA" ;;
+    *) NAME="OnSpec 90c26" ;;
+esac
 DRV=PORTASPI
 [ -z "$ORIG" ] || DRV=$(basename "$ORIG")
 echo "86Box $NAME ATA disk through $DRV: read/write and host-image validation passed"

@@ -23,7 +23,7 @@ show that ASPI on top of them works.
 | Chip / protocol | Devices | Linux reference |
 |---|---|---|
 | EPAT (Shuttle) | SyQuest EZ-135/EZ-Flyer/SparQ parallel, Imation SuperDisk LS-120 parallel, Avatar Shark, many CD-ROMs | `pata_parport/epat.c` (formerly `paride/epat.c`) |
-| EPIA (Shuttle) | older Shuttle based adapters | `pata_parport/epia.c` |
+| EPIA (Shuttle) | older Shuttle hard disk cases, SyQuest EZ parallel (EPIAHD.SYS 4.31) | `pata_parport/epia.c` |
 | BPCK, BPCK6 (MicroSolutions) | Backpack CD-ROM, disk, tape, PD/CD | `pata_parport/bpck.c`, `bpck6.c` |
 | FRPW, FRIQ (Freecom) | Freecom Power and IQ CD-ROM, Traveller | `pata_parport/frpw.c`, `friq.c` |
 | ON20, ON26 (OnSpec) | OnSpec based adapters | `pata_parport/on20.c`, `on26.c` |

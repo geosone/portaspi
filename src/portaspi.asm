@@ -566,6 +566,7 @@ auto_sense:
 %include "epat.inc"
 %include "bpck.inc"
 %include "on26.inc"
+%include "epia.inc"
 %include "ata.inc"
 %include "atapi.inc"
 
@@ -601,6 +602,7 @@ msg_imm         db      'h: Iomega IMM, ', 0
 msg_epat        db      'h: Shuttle EPAT, ', 0
 msg_bpck        db      'h: Micro Solutions BackPack, ', 0
 msg_on26        db      'h: OnSpec 90c26, ', 0
+msg_epia        db      'h: Shuttle EPIA, ', 0
 msg_mode_nib    db      'nibble mode', 13, 10, 0
 msg_mode_ps2    db      'PS/2 mode', 13, 10, 0
 msg_mode_epp    db      'EPP mode', 13, 10, 0
@@ -729,7 +731,13 @@ try_port:
         jne     .chip
         mov     byte [lpt_mode], MODE_NIBBLE
         jmp     .chip
-.ppa3:  mov     byte [lpt_chip], CHIP_PPA
+.ppa3:  call    epia_init               ; an ATA or ATAPI drive behind an EPIA
+        jc      .ppa4
+        cmp     byte [lpt_mode], MODE_EPP       ; nibble or 8-bit so far
+        jne     .chip
+        mov     byte [lpt_mode], MODE_NIBBLE
+        jmp     .chip
+.ppa4:  mov     byte [lpt_chip], CHIP_PPA
         call    ppa_init
         jc      .none
 .chip:
@@ -841,12 +849,13 @@ set_ident:
         loop    .m
 .out:   ret
 
-id_chips        dw      id_ppa, id_imm, id_epat, id_bpck, id_on26
+id_chips        dw      id_ppa, id_imm, id_epat, id_bpck, id_on26, id_epia
 id_ppa          db      'PPA', 0
 id_imm          db      'IMM', 0
 id_epat         db      'EPAT', 0
 id_bpck         db      'BPCK', 0
 id_on26         db      'ON26', 0
+id_epia         db      'EPIA', 0
 id_nibble       db      'nibble', 0
 id_ps2          db      'PS/2', 0
 id_epp          db      'EPP', 0
@@ -869,7 +878,10 @@ print_port:
 .chip3: cmp     byte [lpt_chip], CHIP_ON26
         jne     .chip4
         mov     si, msg_on26
-.chip4: call    print
+.chip4: cmp     byte [lpt_chip], CHIP_EPIA
+        jne     .chip5
+        mov     si, msg_epia
+.chip5: call    print
         mov     si, msg_mode_nib
         cmp     byte [lpt_mode], MODE_PS2
         jne     .n1

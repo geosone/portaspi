@@ -1,13 +1,14 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
-**Status: ZIP drives, LS-120, BackPack CD-ROM, OnSpec hard disks.**
+**Status: ZIP drives, LS-120, BackPack CD-ROM, OnSpec, EPAT and EPIA hard disks.**
 `PORTASPI.SYS` 0.5
 drives Iomega's parallel port ZIP drives in nibble, PS/2 and EPP mode: the
 ZIP 100 (PPA chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives
 ATAPI drives behind two bridges: the Shuttle EPAT, as in the parallel port
 SuperDisk LS-120 (nibble mode so far), and the Micro Solutions BackPack,
 as in the BackPack CD-ROM (nibble and PS/2 mode). Behind an OnSpec 90c26
-(nibble and 8-bit mode) it drives an ATAPI drive or a plain ATA hard disk:
+(nibble and 8-bit mode), a Shuttle EPAT (nibble mode) and a Shuttle EPIA
+(nibble and PS/2 mode) it drives an ATAPI drive or a plain ATA hard disk:
 SCSI commands are translated to ATA (READ/WRITE/VERIFY SECTORS in LBA or
 CHS, INQUIRY and READ CAPACITY from IDENTIFY DEVICE, sense data from the
 error register). Everything else below is still the plan.
@@ -53,7 +54,9 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   IEEE 1284.3 command packets), then the EPAT (the drive's task file must
   keep what is written to it), then the BackPack (units 0 to 7, which
   answer with their address and its complement), then the OnSpec 90c26
-  (its command packet answers B, 5, F on the status lines), then the PPA.
+  (its command packet answers B, 5, F on the status lines), then the
+  Shuttle EPIA (the link test of Shuttle's EPIAHD.SYS: command 80h hands
+  the data lines back), then the PPA.
 - The EPAT is driven in nibble mode whatever `/M:` says. 86Box does not
   emulate its byte mode block reads or EPP, so they are not in yet. The
   BackPack runs in nibble or PS/2 mode; `/M:EPP` falls back to nibble,
@@ -87,7 +90,12 @@ it and the host compares the files and checks the file system
 (`tests/dos_86box_on26.sh`, `LBA=0` for a CHS-only drive, `MB=` the size).
 86Box has no such device upstream; the model, `src/device/lpt_on26.c`, is
 on the `lpt-on26` branch of github.com/geosone/86Box, written from Linux's
-on26.c and the ATA standard.
+on26.c and the ATA standard. `BRIDGE=epat` and `BRIDGE=epia` put the disk
+behind a Shuttle EPAT or EPIA instead (`lpt-epat-hdd` branch; the EPIA
+model is `src/device/lpt_epia.c`, from Linux's epia.c). `ORIG=` runs a
+vendor driver against the model, `ORIGDSK=` the block driver after it:
+ValuStor's VSMOBILE.SYS and OnSpec's EGIDE100.SYS (90c26), Shuttle's
+EPATHD.SYS and EPIAHD.SYS with ASPIDSK or Shuttle's ASPIHDRM.SYS.
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.
