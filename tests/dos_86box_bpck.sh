@@ -5,6 +5,9 @@
 # floppy; the copy is compared with the original on the host.
 # Uses OpenASPI's CD test image and 86Box harness (OPENASPI=path).
 # MGROPT: more PORTASPI options, for example /M:PS2.
+# ORIG=path: Micro Solutions' own BPCDDRV.SYS (not shipped) instead of
+# PORTASPI and ASPICDA, run as a black box against the 86Box model;
+# BPOPT: its options, for example MODE=0.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OPENASPI=${OPENASPI:-$ROOT/../OpenAspi}
@@ -13,10 +16,12 @@ BOX=${BOX:-$OPENASPI/../86Box/build-zip/src/86Box}
 ROMDIR=${ROMDIR:-$HOME/.local/share/86Box/roms}
 MGR=${MGR:-$ROOT/build/PORTASPI.SYS}
 MGROPT=${MGROPT:-}
+ORIG=${ORIG:-}
+BPOPT=${BPOPT:-}
 OUT=${OUT:-$ROOT/build/86box-bpck}
 test -x "$BOX"
 test -d "$ROMDIR"
-test -f "$MGR"
+if [ -n "$ORIG" ]; then test -f "$ORIG"; else test -f "$MGR"; fi
 mkdir -p "$OUT"
 if [ -e "$OUT/control.sock" ]; then
     echo "Refusing to reuse an existing control socket: $OUT/control.sock" >&2
@@ -33,12 +38,19 @@ sed -e 's/^lpt1_enabled = 0$/lpt1_enabled = 1/' \
     -e 's/^cdrom_01_image_path = cd.cue$/cdrom_01_image_path = cd.iso/' \
     "$OPENASPI/tests/fixtures/86box-upc.cfg" > "$OUT/86box.cfg"
 grep -q '^cdrom_01_parameters = 1, lpt$' "$OUT/86box.cfg"
-printf 'DEVICE=PORTASPI.SYS /V %s\r\nDEVICE=ASPICDA.SYS /D:ASPICDA0 /V\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
-    "$MGROPT" > "$OUT/CONFIG.SYS"
-cat > "$OUT/AUTOEXEC.BAT" <<'BAT'
+CDDEV=ASPICDA0
+if [ -n "$ORIG" ]; then
+    CDDEV='BPCDDRV$'
+    printf 'DEVICE=BPCDDRV.SYS %s\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
+        "$BPOPT" > "$OUT/CONFIG.SYS"
+else
+    printf 'DEVICE=PORTASPI.SYS /V %s\r\nDEVICE=ASPICDA.SYS /D:ASPICDA0 /V\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
+        "$MGROPT" > "$OUT/CONFIG.SYS"
+fi
+cat > "$OUT/AUTOEXEC.BAT" <<BAT
 @ECHO OFF
 ASPISCAN > AUX
-SHSUCDX /D:ASPICDA0,R > AUX
+SHSUCDX /D:$CDDEV,R > AUX
 TYPE R:\README.TXT > AUX
 COPY R:\SUB\BIG.BIN A:\CDBIG.BIN > AUX
 IF NOT EXIST A:\CDBIG.BIN ECHO PORTASPI BPCK copy FAILED > AUX
@@ -48,7 +60,11 @@ BAT
 sed -i 's/$/\r/' "$OUT/AUTOEXEC.BAT"
 mdel -i "$OUT/boot.img" ::/BIG.BIN ::/AHCIASPI.SYS 2>/dev/null || true
 mcopy -o -i "$OUT/boot.img" "$OUT/CONFIG.SYS" "$OUT/AUTOEXEC.BAT" ::/
-mcopy -o -i "$OUT/boot.img" "$MGR" ::/PORTASPI.SYS
+if [ -n "$ORIG" ]; then
+    mcopy -o -i "$OUT/boot.img" "$ORIG" ::/BPCDDRV.SYS
+else
+    mcopy -o -i "$OUT/boot.img" "$MGR" ::/PORTASPI.SYS
+fi
 mcopy -o -i "$OUT/boot.img" "$OPENASPI/build/dos/ASPISCAN.COM" ::/
 ROOT=$OPENASPI
 source "$OPENASPI/tests/86box_run.sh"

@@ -78,7 +78,9 @@ takes the ZIP 250 (IMM) instead. `make test-ls120` does the same with an
 LS-120 behind the EPAT (OpenASPI's `tests/dos_86box_ls120.sh LPT=1 MGR=`).
 `make test-bpck` boots with a BackPack CD-ROM: OpenASPI's `ASPICDA.SYS` and
 SHSUCDX read the CD and copy a file from it, which the host compares
-(`tests/dos_86box_bpck.sh`).
+(`tests/dos_86box_bpck.sh`; `ORIG=path/BPCDDRV.SYS` runs Micro Solutions'
+own driver instead, as a black box against the 86Box model: version 4.02
+of 2002 passes, 2.13 of 1998 hangs at init).
 `make test-on26` boots with an ATA hard disk behind an OnSpec 90c26:
 OpenASPI's `ASPIDSK.SYS` mounts its FAT16 partition, DOS reads and writes
 it and the host compares the files and checks the file system
