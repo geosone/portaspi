@@ -98,6 +98,8 @@ of 2002 passes, 2.13 of 1998 hangs at init).
 disk through `ASPIFDD.SYS` (`MGROPT=/M:NIBBLE` or `/M:PS2`), or with
 `ORIG=path/BACKPACK.SYS` through Micro Solutions' own driver; DOS reads a
 file from it and writes one, the host compares both and runs `fsck.fat`.
+`SWAP=1` then changes the disk to a write protected 720 KB one: DOS must
+see the change and read it, and writes must fail with DOS error 00h.
 `make test-on26` boots with an ATA hard disk behind an OnSpec 90c26:
 OpenASPI's `ASPIDSK.SYS` mounts its FAT16 partition, DOS reads and writes
 it and the host compares the files and checks the file system
