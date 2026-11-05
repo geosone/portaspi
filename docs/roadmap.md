@@ -13,7 +13,11 @@
    (checked with Micro Solutions' BPHDDRV.SYS). **FRPW and FRIQ are done
    (nibble and PS/2)**: CD-ROM and hard disk behind Freecom's Power
    adapter and IQ cable, on an 86Box model checked with Freecom's
-   G735.SYS and POWER-CD.SYS. Host
+   G735.SYS and POWER-CD.SYS. **The BackPack floppy drive is done**
+   (a 765 behind the pod, a removable disk for `ASPIFDD.SYS`, checked
+   with BACKPACK.SYS), and **so are the first BackPack CD-ROMs** (160550,
+   162550: a Mitsumi FX001 behind the pod, a CD-ROM for `ASPICDA.SYS`,
+   checked with BPCDDRV.SYS 1.06). Host
    adapter inquiry, execute SCSI I/O, chaining; SPP, PS/2 and EPP modes;
    ATAPI packets pass through. Goal: `ASPIFDD.SYS` and `EXFAT.SYS` on the
    SuperDisk LS-120 parallel, `ASPICDA.SYS` on the BackPack CD-ROM. Both
