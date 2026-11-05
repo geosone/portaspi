@@ -12,7 +12,8 @@
 # BRIDGE: the bridge of the drive on LPT1, bpck (the BackPack), on26,
 # epia, frpw (Freecom Power) or friq (Freecom IQ); ORIG= Freecom's
 # POWER-CD.SYS (IQ) or its older G735.SYS (Power) with BPOPT=/D:FCCD001
-# and ORIGDEV=FCCD001 for those.
+# and ORIGDEV=FCCD001 for those, OnSpec's CDBLAZER.SYS (CD-Blazer) with
+# BRIDGE=on26 BPOPT=/D:ONIDE001 ORIGDEV=ONIDE001 for on26.
 # MSCDEX=path: Microsoft's MSCDEX.EXE (not shipped) as the redirector
 # instead of SHSUCDX. BPCDDRV.SYS 2.13 needs it: with SHSUCDX it reads
 # sector 80000058h for 58h and fails.
