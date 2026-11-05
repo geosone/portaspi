@@ -69,9 +69,11 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   first free SCSI ID; PORTASPI then installs even without a parallel port
   drive. The tape is read in the QIC-80 volume format: the header segment
   with the bad sector map, the volume table, the volumes' segments with
-  their three ECC sectors left out. REWIND, SPACE over filemarks and to the
-  end of data, READ BLOCK LIMITS, MODE SENSE and LOAD/UNLOAD are there;
-  writing, formatting and the ECC correction of damaged sectors are not
+  their three ECC sectors left out. A sector that reads back wrong is put
+  right from the segment's Reed-Solomon parity (one a segment); sectors
+  the controller cannot read at all (CRC errors) are not corrected yet.
+  REWIND, SPACE over filemarks and to the end of data, READ BLOCK LIMITS,
+  MODE SENSE and LOAD/UNLOAD are there; writing and formatting are not
   yet. While it reads PORTASPI takes IRQ 6 and DMA channel 2, and keeps the
   BIOS from turning the floppy motors off under it; the resident part grows
   by the 32 KB segment buffer.
@@ -141,7 +143,8 @@ Micro Solutions' BPHDDRV.SYS (2002) on the BackPack.
 `tests/dos_86box_qic.sh` puts a Colorado 250 floppy tape drive on drive
 select line 1 with a QIC-80 cartridge that `tests/qictape.py` writes:
 three volumes, one across a bad sector and one from track 0 into the
-reversed track 1. `QICREAD.COM` (`tests/qicread.asm`) reads every volume
+reversed track 1, and four sectors damaged after their parity was written
+(data and parity sectors), which the reader must correct. `QICREAD.COM` (`tests/qicread.asm`) reads every volume
 through ASPI and prints its size and CRC-32, spaces over filemarks and
 reads again; the host compares. `TAPE=` takes another cartridge image.
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which

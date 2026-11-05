@@ -48,7 +48,8 @@ else
     head -c 5000 /dev/urandom > "$OUT/vol1.bin"
     head -c 4600000 /dev/urandom > "$OUT/vol2.bin"
     VOLS=("$OUT/vol0.bin" "$OUT/vol1.bin" "$OUT/vol2.bin")
-    python3 -I "$ROOT/tests/qictape.py" "$OUT/tape.img" --bad 4:5 "${VOLS[@]}"
+    python3 -I "$ROOT/tests/qictape.py" "$OUT/tape.img" --bad 4:5 \
+        --damage 3:10 --damage 4:30 --damage 20:0 --damage 151:31 "${VOLS[@]}"
 fi
 python3 -I - "${VOLS[@]}" > "$OUT/expect.txt" <<'PY'
 import sys, zlib

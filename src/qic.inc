@@ -927,6 +927,8 @@ qt_read_seg:
         add     bl, bh
         jmp     .run
 .read_ok:
+        call    qt_ecc                  ; a damaged sector is put right
+        jc      .rderr
         mov     ax, [qt_rseg]           ; the tape streams on
         inc     ax
         mov     [qt_next], ax
@@ -952,6 +954,129 @@ qt_read_seg:
         pop     edx
         pop     ecx
         pop     ebx
+        ret
+
+;-----------------------------------------------------------------------------
+; The Reed-Solomon code of a segment
+;
+; Each byte column of a segment's n good sectors is a code word over
+; GF(256) (x^8+x^7+x^2+x+1) whose generator has the roots a^-1, 1 and a:
+; good sector i is the coefficient of x^(n-1-i), the last three carry the
+; parity.  The syndromes S-1, S0 and S1 of a whole column are zero.  One
+; damaged sector, the one the controller read without a CRC error but
+; wrong, gives in each column it touches the error e = S0 at X = S1 / S0
+; = a^(n-1-i), with S-1 = S0 / X; all columns must agree on i.  More
+; damage than that, or sectors the controller could not read at all, is
+; not corrected yet.
+;-----------------------------------------------------------------------------
+
+gf_log          times 256 db 0
+qt_epos         dw      0               ; the damaged sector, FFFFh: none yet
+
+qt_gf_init:
+        push    ax
+        push    bx
+        push    cx
+        xor     cl, cl                  ; i
+        mov     al, 1                   ; a^i
+.l:     movzx   bx, al
+        mov     [gf_log+bx], cl
+        shl     al, 1
+        jnc     .n
+        xor     al, 87h
+.n:     inc     cl
+        cmp     cl, 255
+        jb      .l
+        pop     cx
+        pop     bx
+        pop     ax
+        ret
+
+; check, and correct, the segment in the buffer: [qt_bcap] / 1024 + 3
+; good sectors.  CF if it is damaged beyond that.
+qt_ecc: pushad
+        mov     bp, [qt_bcap]
+        shr     bp, 10
+        add     bp, 3                   ; n
+        xor     di, di                  ; quick: S0 of every column
+.q:     mov     si, [qt_buf]
+        add     si, di
+        mov     cx, bp
+        xor     eax, eax
+.qs:    xor     eax, [si]
+        add     si, 1024
+        loop    .qs
+        or      eax, eax
+        jnz     .full
+        add     di, 4
+        cmp     di, 1024
+        jb      .q
+        jmp     .ok
+.full:  mov     word [qt_epos], 0FFFFh
+        xor     di, di                  ; column
+.col:   mov     si, [qt_buf]
+        add     si, di
+        mov     cx, bp
+        xor     dx, dx                  ; DL = S0, DH = S1
+        xor     bl, bl                  ; BL = S-1
+.s:     mov     al, [si]
+        xor     dl, al
+        shl     dh, 1                   ; S1 * a
+        jnc     .a
+        xor     dh, 87h
+.a:     xor     dh, al
+        shr     bl, 1                   ; S-1 * a^-1
+        jnc     .b
+        xor     bl, 0C3h
+.b:     xor     bl, al
+        add     si, 1024
+        loop    .s
+        or      dl, dl
+        jnz     .err
+        or      dh, bl                  ; S0 zero: the others too
+        jnz     .bad
+        jmp     .next
+.err:   or      dh, dh
+        jz      .bad
+        or      bl, bl
+        jz      .bad
+        movzx   si, dl
+        movzx   ax, byte [gf_log+si]    ; log S0
+        movzx   si, dh
+        movzx   cx, byte [gf_log+si]    ; log X = log S1 - log S0
+        sub     cx, ax
+        jae     .x
+        add     cx, 255
+.x:     movzx   si, bl                  ; log S-1 + log X = log S0
+        movzx   si, byte [gf_log+si]
+        add     si, cx
+        cmp     si, 255
+        jb      .y
+        sub     si, 255
+.y:     cmp     si, ax
+        jne     .bad
+        mov     ax, bp                  ; i = n - 1 - log X
+        dec     ax
+        sub     ax, cx
+        jb      .bad
+        cmp     word [qt_epos], 0FFFFh
+        je      .first
+        cmp     [qt_epos], ax
+        jne     .bad
+.first: mov     [qt_epos], ax
+        shl     ax, 10                  ; e into the damaged byte
+        add     ax, di
+        add     ax, [qt_buf]
+        mov     si, ax
+        xor     [si], dl
+.next:  inc     di
+        cmp     di, 1024
+        jb      .col
+.ok:    popad
+        clc
+        ret
+.bad:   popad
+        stc
         ret
 
 ; get the tape streaming just before segment AX.  CF and EAX = the sense.
@@ -1646,6 +1771,7 @@ qt_buffer:
 ; [qt_base]?  CF if not.
 ;-----------------------------------------------------------------------------
 qic_init:
+        call    qt_gf_init
         mov     dx, [qt_base]
         add     dx, QT_MSR
         in      al, dx

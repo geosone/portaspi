@@ -14,7 +14,12 @@ the Reed-Solomon parity of each byte column (GF(256), x^8+x^7+x^2+x+1,
 roots a^-1, 1, a).  Bad sectors are skipped.  The image is the tape as
 86Box's fdd_tape.c sees it: segment n at n * 32768, sparse.
 
-Usage: qictape.py IMAGE [--bad SEG:SECTOR ...] [--label TEXT] FILE...
+--damage SEG:SECTOR changes bytes of a good sector after the parity is
+written, as a sector that reads back wrong without a CRC error: the
+reader must put it right from the parity.
+
+Usage: qictape.py IMAGE [--bad SEG:SECTOR ...] [--damage SEG:SECTOR ...]
+                  [--label TEXT] FILE...
        qictape.py --list IMAGE
 """
 
@@ -122,6 +127,17 @@ def vtbl_entry(start, end, size, desc):
     return bytes(e)
 
 
+def damage(path, spots):
+    with open(path, "r+b") as img:
+        for seg, sec in spots:
+            img.seek(seg * SEGMENT + sec * SECTOR)
+            data = bytearray(img.read(SECTOR))
+            for col in range(0, SECTOR, 7):
+                data[col] ^= (col * 37 + seg + sec) & 0xFF or 0x5A
+            img.seek(seg * SEGMENT + sec * SECTOR)
+            img.write(data)
+
+
 def make(path, files, bad, label):
     with open(path, "wb") as img:
         img.truncate(SEGMENTS * SEGMENT)
@@ -173,6 +189,8 @@ def main():
     p.add_argument("files", nargs="*")
     p.add_argument("--bad", action="append", default=[],
                    help="SEG:SECTOR, a bad sector (sector 0-31)")
+    p.add_argument("--damage", action="append", default=[],
+                   help="SEG:SECTOR, a good sector to damage after the parity")
     p.add_argument("--label", default="PORTASPI test tape")
     p.add_argument("--list", action="store_true")
     a = p.parse_args()
@@ -184,6 +202,7 @@ def main():
         seg, sec = (int(v) for v in b.split(":"))
         bad[seg] = bad.get(seg, 0) | (1 << sec)
     make(a.image, a.files, bad, a.label)
+    damage(a.image, [tuple(int(v) for v in d.split(":")) for d in a.damage])
 
 
 if __name__ == "__main__":
