@@ -5,7 +5,7 @@ OPENASPI ?= ../OpenAspi
 
 all: build/PORTASPI.SYS
 
-build/PORTASPI.SYS: src/portaspi.asm src/lpt.inc src/ppa.inc src/imm.inc src/epat.inc src/bpck.inc src/on26.inc src/epia.inc src/fc.inc src/ata.inc src/fdc.inc src/mcd.inc src/atapi.inc src/aspi.inc | build
+build/PORTASPI.SYS: src/portaspi.asm src/lpt.inc src/ppa.inc src/imm.inc src/epat.inc src/bpck.inc src/on26.inc src/epia.inc src/fc.inc src/ata.inc src/fdc.inc src/mcd.inc src/qic.inc src/atapi.inc src/aspi.inc | build
 	$(NASM) $(NFLAGS) -Isrc/ -l build/portaspi.lst -o $@ $<
 
 build:

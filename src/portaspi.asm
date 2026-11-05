@@ -18,12 +18,15 @@
 ; Build:  nasm -f bin -Isrc/ -o PORTASPI.SYS src/portaspi.asm
 ;
 ; CONFIG.SYS:
-;   DEVICE=PORTASPI.SYS [/P:addr] [/M:NIBBLE|PS2|EPP] [/T:s] [/ID:name] [/Q] [/V]
+;   DEVICE=PORTASPI.SYS [/P:addr] [/M:NIBBLE|PS2|EPP] [/F[:unit]] [/T:s]
+;                       [/ID:name] [/Q] [/V]
 ;
 ;   /P:addr  parallel port base address in hex (default: the LPT ports in
 ;            the BIOS data area, the first one with a drive)
 ;   /M:mode  port mode: NIBBLE (any port), PS2 (bidirectional), EPP
 ;            (default: PS2 where the port is bidirectional, else NIBBLE)
+;   /F:unit  also a floppy tape drive (QIC-117) on drive select line unit
+;            (0-3, default 1) of the floppy controller at 3F0h (qic.inc)
 ;   /T:s     command timeout in seconds (default 15)
 ;   /ID:name ASPI manager id (default PORTASPI)
 ;   /Q       quiet, /V verbose
@@ -414,6 +417,9 @@ srb_exec:
 .dirset:
         mov     [s_dir], ah
         mov     byte [s_xlate], XL_NONE
+        mov     al, [x_target]
+        cmp     al, [qt_id]             ; the floppy tape
+        je      .go
         cmp     byte [lpt_chip], CHIP_EPAT
         jb      .go
         cmp     byte [dev_ata], 0
@@ -575,6 +581,7 @@ auto_sense:
 %include "ata.inc"
 %include "fdc.inc"
 %include "mcd.inc"
+%include "qic.inc"
 %include "atapi.inc"
 
 ;-----------------------------------------------------------------------------
@@ -594,6 +601,7 @@ opt_port        dw      0               ; /P:
 opt_mode        db      0FFh            ; /M:, 0FFh: choose
 opt_quiet       db      0               ; /Q
 opt_verbose     db      0               ; /V
+opt_tape        db      0               ; /F: unit + 1
 inq_buf         times 36 db 0
 id_buf          times 512 db 0         ; IDENTIFY DEVICE data
 
@@ -601,6 +609,10 @@ msg_banner      db      'PORTASPI ', VERSION_STR
                 db      ' - ASPI manager for parallel port devices', 13, 10, 0
 msg_no386       db      'PORTASPI needs a 386 or better', 13, 10, 0
 msg_no_dev      db      'PORTASPI: no drive found on the parallel ports', 13, 10, 0
+msg_no_tape     db      'PORTASPI: no drive found on the parallel ports or the floppy controller', 13, 10, 0
+msg_tape        db      '  floppy controller 3F0h, unit ', 0
+msg_tape2       db      ': QIC-117 tape', 13, 10, 0
+id_tape         db      'QIC FDC 03F0 u', 0
 msg_not_inst    db      'PORTASPI not installed', 13, 10, 0
 msg_bad_opt     db      'PORTASPI: unknown option ignored', 13, 10, 0
 msg_port        db      '  port ', 0
@@ -670,10 +682,16 @@ init:
 .skip:  add     bx, 2
         cmp     bx, 6
         jb      .next
-.nodev: mov     si, msg_no_dev
-        jmp     init_fail
+.nodev: call    tape_setup
+        jnc     .have
+        mov     si, msg_no_dev
+        cmp     byte [opt_tape], 0
+        je      .nd
+        mov     si, msg_no_tape
+.nd:    jmp     init_fail
 
-.found: cmp     byte [dev_fdd], 0       ; the floppy motor goes off on
+.found: call    tape_setup
+.have:  cmp     byte [dev_fdd], 0       ; the floppy motor goes off on
         je      .notimer                ; the timer tick
         push    es
         mov     ax, 351Ch
@@ -799,6 +817,73 @@ try_port:
         cmp     bx, NTARGET
         jb      .pr
 .quiet: clc
+        ret
+.none:  stc
+        ret
+
+;-----------------------------------------------------------------------------
+; With /F, the floppy tape drive: on the first free SCSI ID.  CF if there is
+; none (or no /F).
+;-----------------------------------------------------------------------------
+tape_setup:
+        mov     al, [opt_tape]
+        or      al, al
+        jz      .none
+        dec     al
+        mov     [qt_unit], al
+        call    qic_init
+        jc      .none
+        xor     bx, bx
+        xor     dx, dx                  ; parallel port drives
+.free:  cmp     byte [dev_type+bx], 0FFh
+        je      .id
+        inc     dx
+        inc     bx
+        cmp     bx, NTARGET
+        jb      .free
+        jmp     .none
+.id:    mov     [qt_id], bl
+        mov     byte [dev_type+bx], 1   ; sequential access
+        push    bx
+.cnt:   inc     bx                      ; drives after the free ID
+        cmp     bx, NTARGET
+        jae     .cnted
+        cmp     byte [dev_type+bx], 0FFh
+        je      .cnt
+        inc     dx
+        jmp     .cnt
+.cnted: pop     bx
+        or      dx, dx
+        jnz     .named
+        push    cs                      ; the host adapter is the tape's
+        pop     es
+        mov     di, ha_ident
+        mov     cx, 16
+        mov     al, ' '
+        rep     stosb
+        mov     di, ha_ident
+        mov     si, id_tape
+.idc:   lodsb
+        or      al, al
+        jz      .idu
+        stosb
+        jmp     .idc
+.idu:   mov     al, [qt_unit]
+        add     al, '0'
+        stosb
+.named: cmp     byte [opt_quiet], 0
+        jne     .ok
+        mov     si, msg_tape
+        call    print
+        mov     al, [qt_unit]
+        add     al, '0'
+        call    putc
+        mov     si, msg_tape2
+        call    print
+        call    inquire
+        jc      .ok
+        call    print_dev
+.ok:    clc
         ret
 .none:  stc
         ret
@@ -1081,6 +1166,8 @@ parse_cmdline:
         je      .opt_v
         cmp     al, 'I'
         je      .opt_i
+        cmp     al, 'F'
+        je      .opt_f
 .bad:   push    si
         mov     si, msg_bad_opt
         call    print
@@ -1107,6 +1194,17 @@ parse_cmdline:
         div     cx
         movzx   eax, ax
         mov     [tmo_ticks], eax
+        jmp     .args
+.opt_f: mov     byte [opt_tape], 2      ; unit 1
+        cmp     byte [es:si], ':'
+        jne     .args
+        inc     si
+        call    get_number
+        jc      .bad
+        cmp     ax, 3
+        ja      .bad
+        inc     al
+        mov     [opt_tape], al
         jmp     .args
 .opt_q: mov     byte [opt_quiet], 1
         jmp     .args

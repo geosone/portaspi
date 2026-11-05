@@ -202,6 +202,11 @@ norm_buf:
 ; The chip of the port
 ;-----------------------------------------------------------------------------
 dev_exec:
+        push    ax
+        mov     al, [x_target]
+        cmp     al, [qt_id]             ; the floppy tape
+        pop     ax
+        je      qic_exec
         cmp     byte [dev_fdd], 0       ; the BackPack's floppy drive
         jne     fdc_exec
         cmp     byte [dev_mcd], 0       ; the first BackPack CD-ROMs' Mitsumi
