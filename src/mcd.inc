@@ -34,6 +34,7 @@ MC_CMD_INFO     equ     10h             ; first and last track, lead-out
 MC_CMD_STATUS   equ     40h
 MC_CMD_READ     equ     0C0h            ; + 1 at double speed
 MC_CMD_VERSION  equ     0DCh
+MC_CMD_CLOSE    equ     0F8h
 
 MC_ST_ERROR     equ     07h             ; command check, play, error
 MC_ST_CHANGE    equ     20h
@@ -41,8 +42,6 @@ MC_ST_READY     equ     40h
 MC_ST_OPEN      equ     80h
 
 MC_SECTOR       equ     2048
-
-SNS_NOT_READY   equ     02h | (04h << 8) | (01h << 16)  ; becoming ready
 
 dev_mcd         db      0               ; the drive is the pod's Mitsumi
 mc_speed        db      0               ; 1 for an FX001D (double speed)
@@ -283,37 +282,52 @@ mc_status:
         call    mc_out
         jmp     mc_byte
 
-; a disc in a drive that is ready, once a change was reported.
-; CF and EAX = the sense if not.
+; a disc in a drive that is ready, once a change was reported.  An open
+; tray is closed, as bpmcd.c and BPCDDRV.SYS do; after a change the drive
+; gets the command timeout to come up.  CF and EAX = the sense if not.
 mc_ready:
-        call    mc_status
+        push    ebx
+        push    esi
+        call    get_ticks
+        mov     esi, eax
+        xor     bl, bl                  ; the status bits seen
+.st:    call    mc_status
         jc      .lost
-        test    al, MC_ST_CHANGE        ; a new disc: UNIT ATTENTION once,
+        mov     bh, al
+        or      bl, al
+        test    bh, MC_ST_OPEN
+        jz      .closed
+        mov     al, MC_CMD_CLOSE
+        call    mc_out
+        call    mc_byte
+        jc      .lost
+        or      bl, al
+        jmp     .wait
+.closed:
+        test    bh, MC_ST_READY
+        jnz     .ready
+        test    bl, MC_ST_CHANGE        ; a new disc may still spin up
+        jz      .none
+.wait:  call    get_ticks
+        sub     eax, esi
+        cmp     eax, [tmo_ticks]
+        jbe     .st
+.none:  mov     eax, SNS_NO_MEDIUM
+        jmp     .fail
+.ready: test    bl, MC_ST_CHANGE        ; a new disc: UNIT ATTENTION once,
         jz      .same                   ; the drive sets the bit in more
         cmp     byte [mc_ua], 0         ; than one status after a change
-        jne     .open
+        jne     .ok
         mov     byte [mc_ua], 1
-        jmp     .changed
-.same:  mov     byte [mc_ua], 0
-.open:  test    al, MC_ST_OPEN
-        jnz     .none
-        test    al, MC_ST_READY
-        jz      .notyet
-        clc
-        ret
-.changed:
         mov     eax, SNS_CHANGED
-        stc
-        ret
-.none:  mov     eax, SNS_NO_MEDIUM
-        stc
-        ret
-.notyet:
-        mov     eax, SNS_NOT_READY
-        stc
-        ret
+        jmp     .fail
+.same:  mov     byte [mc_ua], 0
+.ok:    clc
+        jmp     .o
 .lost:  mov     eax, SNS_ABORTED
-        stc
+.fail:  stc
+.o:     pop     esi
+        pop     ebx
         ret
 
 ; the disc information into mc_info (BCD).  CF and EAX = the sense if not.

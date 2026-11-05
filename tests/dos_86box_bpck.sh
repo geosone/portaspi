@@ -21,6 +21,8 @@
 # FX001 drive behind the BackPack (86Box's lpt_bpmcd), through PORTASPI or
 # with ORIG= Micro Solutions' BPCDDRV.SYS 1.06 and MSCDEX=.
 # BPUNIT: the BackPack's chain address (unit), default 7.
+# SWAP=1: then a second CD goes in; the redirector must see the change and
+# read a file only that CD has.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OPENASPI=${OPENASPI:-$ROOT/../OpenAspi}
@@ -35,6 +37,7 @@ ORIGDEV=${ORIGDEV:-BPCDDRV\$}
 MSCDEX=${MSCDEX:-}
 BRIDGE=${BRIDGE:-bpck}
 BPUNIT=${BPUNIT:-}
+SWAP=${SWAP:-}
 OUT=${OUT:-$ROOT/build/86box-bpck}
 test -x "$BOX"
 test -d "$ROMDIR"
@@ -49,6 +52,15 @@ if [ ! -f "$OPENASPI/build/dos-cda/cd.iso" ]; then
     bash "$OPENASPI/tests/dos_cda.sh" >/dev/null
 fi
 cp "$OPENASPI/build/dos-cda/boot.img" "$OPENASPI/build/dos-cda/cd.iso" "$OUT/"
+ON=()
+if [ -n "$SWAP" ]; then
+    rm -rf "$OUT/cd2root" "$OUT/cd2.iso"
+    mkdir -p "$OUT/cd2root"
+    head -c 70000 /dev/urandom > "$OUT/cd2root/SWAP.BIN"
+    xorriso -outdev "$OUT/cd2.iso" -volid SECOND \
+        -map "$OUT/cd2root" / -padding 1m -end 2>/dev/null
+    ON=(--on 'BPCK SWAP' "cd load 0 $OUT/cd2.iso; step 3000; key down 0x1c; key up 0x1c")
+fi
 sed -e 's/^lpt1_enabled = 0$/lpt1_enabled = 1/' \
     -e 's/^cdrom_01_parameters = 1, atapi$/cdrom_01_parameters = 1, lpt/' \
     -e 's/^cdrom_01_ide_channel = 1:0$/cdrom_01_lpt_port = 0/' \
@@ -98,8 +110,18 @@ TYPE R:\README.TXT > AUX
 COPY R:\SUB\BIG.BIN A:\CDBIG.BIN > AUX
 IF NOT EXIST A:\CDBIG.BIN ECHO PORTASPI BPCK copy FAILED > AUX
 ECHO PORTASPI BPCK copy passed > AUX
-ECHO PORTASPI BPCK DONE > AUX
 BAT
+if [ -n "$SWAP" ]; then
+    cat >> "$OUT/AUTOEXEC.BAT" <<BAT
+ECHO BPCK SWAP > AUX
+PAUSE
+DIR R: > AUX
+COPY R:\SWAP.BIN A:\SWAP.BIN > AUX
+IF NOT EXIST A:\SWAP.BIN ECHO PORTASPI BPCK swap FAILED > AUX
+ECHO PORTASPI BPCK swap passed > AUX
+BAT
+fi
+echo 'ECHO PORTASPI BPCK DONE > AUX' >> "$OUT/AUTOEXEC.BAT"
 sed -i 's/$/\r/' "$OUT/AUTOEXEC.BAT"
 mdel -i "$OUT/boot.img" ::/BIG.BIN ::/AHCIASPI.SYS 2>/dev/null || true
 mcopy -o -i "$OUT/boot.img" "$OUT/CONFIG.SYS" "$OUT/AUTOEXEC.BAT" ::/
@@ -114,7 +136,14 @@ ROOT=$OPENASPI
 source "$OPENASPI/tests/86box_run.sh"
 run_86box_dos --done 'PORTASPI BPCK DONE' \
     --expect 'PORTASPI BPCK copy passed' --count 1 \
-    --read-text 'OpenASPI ASPICDA read test'
+    --read-text 'OpenASPI ASPICDA read test' "${ON[@]}"
 mcopy -o -i "$OUT/boot.img" ::/CDBIG.BIN "$OUT/CDBIG.BIN"
 cmp "$OUT/CDBIG.BIN" "$OPENASPI/build/dos-cda/cdroot/SUB/BIG.BIN"
+if [ -n "$SWAP" ]; then
+    grep -q 'PORTASPI BPCK swap passed' "$OUT/serial.log"
+    if grep -q 'swap FAILED' "$OUT/serial.log"; then exit 1; fi
+    mcopy -o -i "$OUT/boot.img" ::/SWAP.BIN "$OUT/SWAP.BACK"
+    cmp "$OUT/SWAP.BACK" "$OUT/cd2root/SWAP.BIN"
+    echo "86Box $NAME CD-ROM through $DRV: disc change passed"
+fi
 echo "86Box $NAME CD-ROM through $DRV: read and compare passed"
