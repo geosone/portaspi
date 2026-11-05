@@ -17,6 +17,9 @@
 # MSCDEX=path: Microsoft's MSCDEX.EXE (not shipped) as the redirector
 # instead of SHSUCDX. BPCDDRV.SYS 2.13 needs it: with SHSUCDX it reads
 # sector 80000058h for 58h and fails.
+# BRIDGE=bpmcd: the first BackPack CD-ROMs (160550, 162550), a Mitsumi
+# FX001 drive behind the BackPack (lpt-bpmcd branch of 86Box), with
+# ORIG= Micro Solutions' BPCDDRV.SYS 1.06 and MSCDEX=.
 # BPUNIT: the BackPack's chain address (unit), default 7.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -52,18 +55,26 @@ sed -e 's/^lpt1_enabled = 0$/lpt1_enabled = 1/' \
     -e 's/^cdrom_01_image_path = cd.cue$/cdrom_01_image_path = cd.iso/' \
     "$OPENASPI/tests/fixtures/86box-upc.cfg" > "$OUT/86box.cfg"
 grep -q '^cdrom_01_parameters = 1, lpt$' "$OUT/86box.cfg"
-if [ "$BRIDGE" != bpck ]; then
+if [ "$BRIDGE" = bpmcd ]; then
+    sed -i -e 's/^cdrom_01_parameters = 1, lpt$/cdrom_01_parameters = 1, mitsumi/' \
+        -e '/^cdrom_01_lpt_port = 0$/d' \
+        -e 's/^lpt1_enabled = 1$/&\nlpt1_device = bpmcd/' "$OUT/86box.cfg"
+    grep -q '^lpt1_device = bpmcd$' "$OUT/86box.cfg"
+elif [ "$BRIDGE" != bpck ]; then
     sed -i "s/^cdrom_01_lpt_port = 0$/&\ncdrom_01_lpt_bridge = $BRIDGE/" "$OUT/86box.cfg"
     grep -q "^cdrom_01_lpt_bridge = $BRIDGE$" "$OUT/86box.cfg"
 fi
 if [ -n "$BPUNIT" ]; then
-    printf '\n[Micro Solutions BackPack Bantam CD-ROM #1]\nunit = %s\n' "$BPUNIT" >> "$OUT/86box.cfg"
+    SECTION="Micro Solutions BackPack Bantam CD-ROM #1"
+    [ "$BRIDGE" != bpmcd ] || SECTION="Micro Solutions BackPack CD-ROM (Mitsumi, 160550/162550) #1"
+    printf '\n[%s]\nunit = %s\n' "$SECTION" "$BPUNIT" >> "$OUT/86box.cfg"
 fi
 case "$BRIDGE" in
     on26) NAME="OnSpec 90c26" ;;
     epia) NAME="Shuttle EPIA" ;;
     frpw) NAME="Freecom Power" ;;
     friq) NAME="Freecom IQ" ;;
+    bpmcd) NAME="BackPack (Mitsumi)" ;;
     *) NAME="BackPack" ;;
 esac
 DRV=PORTASPI
