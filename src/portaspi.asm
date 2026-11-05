@@ -602,6 +602,7 @@ opt_mode        db      0FFh            ; /M:, 0FFh: choose
 opt_quiet       db      0               ; /Q
 opt_verbose     db      0               ; /V
 opt_tape        db      0               ; /F: unit + 1
+res_end         dw      resident_end    ; and the tape's buffer
 inq_buf         times 36 db 0
 id_buf          times 512 db 0         ; IDENTIFY DEVICE data
 
@@ -704,12 +705,13 @@ init:
         int     21h
 .notimer:
         les     bx, [req_ptr]
-        mov     word [es:bx+RQ_END], resident_end
+        mov     ax, [res_end]
+        mov     [es:bx+RQ_END], ax
         cmp     byte [opt_verbose], 0
         je      .sized
         mov     si, msg_resident
         call    print
-        mov     ax, resident_end
+        mov     ax, [res_end]
         call    print_dec
         mov     si, msg_bytes
         call    print
@@ -831,8 +833,14 @@ tape_setup:
         jz      .none
         dec     al
         mov     [qt_unit], al
-        call    qic_init
+        mov     ax, resident_end
+        call    qt_buffer
         jc      .none
+        push    ax
+        call    qic_init
+        pop     ax
+        jc      .none
+        mov     [res_end], ax
         xor     bx, bx
         xor     dx, dx                  ; parallel port drives
 .free:  cmp     byte [dev_type+bx], 0FFh

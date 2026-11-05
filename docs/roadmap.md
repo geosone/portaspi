@@ -33,7 +33,10 @@
 3. **Floppy tape, reading**: QIC-117 on the floppy controller and on
    parallel port FDC adapters; reading QIC-80/3010/3020 tapes into
    `ASPITAP.SYS` and OpenTape. 86Box has both: the floppy tape drive and
-   the Ditto parallel port drive.
+   the Ditto parallel port drive. **QIC-80 on the floppy controller is
+   read** (`/F`, tested with 86Box's Colorado 250): the volumes of the
+   volume table as tape files, bad sectors skipped. Still to do: the ECC
+   correction, QIC-3010/3020 rates and wide formats, the Ditto parallel.
 4. **Floppy tape, writing and formatting**: segments with ECC, bad sector
    map, volume table, streaming.
 5. **Optional**: the floppy drive as a SCSI disk; proprietary CD-ROM

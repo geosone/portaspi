@@ -1,6 +1,6 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
-**Status: ZIP drives, LS-120, BackPack CD-ROM and floppy drive, OnSpec, EPAT, EPIA, BackPack and Freecom.**
+**Status: ZIP drives, LS-120, BackPack CD-ROM and floppy drive, OnSpec, EPAT, EPIA, BackPack and Freecom; floppy tape reading.**
 `PORTASPI.SYS` 0.5
 drives Iomega's parallel port ZIP drives in nibble, PS/2 and EPP mode: the
 ZIP 100 (PPA chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives
@@ -20,7 +20,11 @@ go a track at a time through the pod's buffer. The first BackPack CD-ROMs
 (160550, 162550), a Mitsumi FX001 or FX001D behind the BackPack (nibble
 and PS/2 mode), become a SCSI CD-ROM drive: READ (10) a sector at a time,
 READ CAPACITY and READ TOC from the drive's disc information (the first
-track and the lead-out only). Everything else below is still the plan.
+track and the lead-out only). With `/F` a QIC-117 floppy tape drive on the
+floppy controller becomes a SCSI tape drive for reading: each volume of a
+QIC-80 cartridge (the volume table of QIC-80/QIC-113) is a tape file,
+read with READ (6) of variable blocks, with filemarks between them.
+Everything else below is still the plan.
 
 `PORTASPI.SYS` is an ASPI manager (device `SCSIMGR$`) for DOS. It is meant
 to make old devices on the parallel port and the floppy controller
@@ -51,7 +55,7 @@ ASPI manager loaded before it, so all of them can be used together.
 ## Use
 
 ```dos
-DEVICE=C:\OPENASPI\PORTASPI.SYS [/P:378] [/M:NIBBLE|PS2|EPP] [/T:15] [/ID:name] [/Q] [/V]
+DEVICE=C:\OPENASPI\PORTASPI.SYS [/P:378] [/M:NIBBLE|PS2|EPP] [/F[:1]] [/T:15] [/ID:name] [/Q] [/V]
 DEVICE=C:\OPENASPI\ASPIFDD.SYS
 ```
 
@@ -60,6 +64,17 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
 - `/M:` the port mode. By default it uses PS/2 when the port can read bytes
   (or has an ECR), else nibble mode. EPP is only used with `/M:EPP`.
 - `/T:` the command timeout in seconds (default 15).
+- `/F:` also a floppy tape drive (QIC-117) on drive select line 0 to 3
+  (default 1, the B: line) of the floppy controller at 3F0h. It gets the
+  first free SCSI ID; PORTASPI then installs even without a parallel port
+  drive. The tape is read in the QIC-80 volume format: the header segment
+  with the bad sector map, the volume table, the volumes' segments with
+  their three ECC sectors left out. REWIND, SPACE over filemarks and to the
+  end of data, READ BLOCK LIMITS, MODE SENSE and LOAD/UNLOAD are there;
+  writing, formatting and the ECC correction of damaged sectors are not
+  yet. While it reads PORTASPI takes IRQ 6 and DMA channel 2, and keeps the
+  BIOS from turning the floppy motors off under it; the resident part grows
+  by the 32 KB segment buffer.
 - PORTASPI finds the chip on its own. It tries the IMM first (it answers
   IEEE 1284.3 command packets), then the EPAT (the drive's task file must
   keep what is written to it), then the BackPack (units 0 to 7, which
@@ -123,6 +138,12 @@ vendor driver against the model, `ORIGDSK=` the block driver after it:
 ValuStor's VSMOBILE.SYS (V2.00 and V3.26) and OnSpec's EGIDE100.SYS (90c26), Shuttle's
 EPATHD.SYS and EPIAHD.SYS with ASPIDSK or Shuttle's ASPIHDRM.SYS, and
 Micro Solutions' BPHDDRV.SYS (2002) on the BackPack.
+`tests/dos_86box_qic.sh` puts a Colorado 250 floppy tape drive on drive
+select line 1 with a QIC-80 cartridge that `tests/qictape.py` writes:
+three volumes, one across a bad sector and one from track 0 into the
+reversed track 1. `QICREAD.COM` (`tests/qicread.asm`) reads every volume
+through ASPI and prints its size and CRC-32, spaces over filemarks and
+reads again; the host compares. `TAPE=` takes another cartridge image.
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.
