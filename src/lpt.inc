@@ -202,6 +202,8 @@ norm_buf:
 ; The chip of the port
 ;-----------------------------------------------------------------------------
 dev_exec:
+        cmp     byte [dev_fdd], 0       ; the BackPack's floppy drive
+        jne     fdc_exec
         cmp     byte [dev_ata], 0       ; an ATA disk behind a bridge
         jne     ata_exec
         cmp     byte [lpt_chip], CHIP_EPAT
@@ -211,9 +213,11 @@ dev_exec:
         jmp     ppa_exec
 
 dev_bus_reset:
-        cmp     byte [dev_ata], 0       ; nothing to reset: no bus
+        cmp     byte [dev_fdd], 0       ; nothing to reset: no bus
+        jne     .out
+        cmp     byte [dev_ata], 0
         je      .bus
-        ret
+.out:   ret
 .bus:   cmp     byte [lpt_chip], CHIP_EPAT
         jae     atapi_reset
         cmp     byte [lpt_chip], CHIP_IMM

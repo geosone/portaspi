@@ -418,6 +418,8 @@ srb_exec:
         jb      .go
         cmp     byte [dev_ata], 0
         jne     .go
+        cmp     byte [dev_fdd], 0
+        jne     .go
         call    translate_cdb           ; ATAPI drive
         jnc     .xl
         jmp     .invalid
@@ -569,6 +571,7 @@ auto_sense:
 %include "epia.inc"
 %include "fc.inc"
 %include "ata.inc"
+%include "fdc.inc"
 %include "atapi.inc"
 
 ;-----------------------------------------------------------------------------
@@ -667,7 +670,19 @@ init:
 .nodev: mov     si, msg_no_dev
         jmp     init_fail
 
-.found: les     bx, [req_ptr]
+.found: cmp     byte [dev_fdd], 0       ; the floppy motor goes off on
+        je      .notimer                ; the timer tick
+        push    es
+        mov     ax, 351Ch
+        int     21h
+        mov     [fd_old1c], bx
+        mov     [fd_old1c+2], es
+        pop     es
+        mov     dx, fd_timer
+        mov     ax, 251Ch
+        int     21h
+.notimer:
+        les     bx, [req_ptr]
         mov     word [es:bx+RQ_END], resident_end
         cmp     byte [opt_verbose], 0
         je      .sized

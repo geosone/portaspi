@@ -1,10 +1,12 @@
 #!/bin/bash
 # BackPack floppy drive (Micro Solutions BPCK bridge with its own 765) on
-# LPT1 of 86Box (AUTOMATION=ON), through Micro Solutions' BACKPACK.SYS 2.13
-# (ORIG=path, not shipped) against the 86Box model.
-# The pod's drive is floppy drive 5, a 1.44 MB image. DOS reads a file
-# from it and writes one to it; the host compares both and runs fsck.
-# LETTER: the drive letter BACKPACK.SYS gives the pod (default C).
+# LPT1 of 86Box (AUTOMATION=ON), through PORTASPI.SYS and OpenASPI's
+# ASPIFDD.SYS, or with ORIG=path through Micro Solutions' BACKPACK.SYS 2.13
+# (not shipped). The pod's drive is floppy drive 5, a 1.44 MB image. DOS
+# reads a file from it and writes one to it; the host compares both and
+# runs fsck.
+# MGROPT: more PORTASPI options, for example /M:PS2.
+# LETTER: the drive letter the pod gets (default C).
 # Uses OpenASPI's boot floppy and 86Box harness (OPENASPI=path).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -13,11 +15,13 @@ OPENASPI=$(cd "$OPENASPI" && pwd)
 BOX=${BOX:-$OPENASPI/../86Box/build-zip/src/86Box}
 ROMDIR=${ROMDIR:-$HOME/.local/share/86Box/roms}
 ORIG=${ORIG:-}
+MGR=${MGR:-$ROOT/build/PORTASPI.SYS}
+MGROPT=${MGROPT:-}
 LETTER=${LETTER:-C}
 OUT=${OUT:-$ROOT/build/86box-bpfdd}
 test -x "$BOX"
 test -d "$ROMDIR"
-test -f "$ORIG"
+if [ -n "$ORIG" ]; then test -f "$ORIG"; else test -f "$MGR"; fi
 mkdir -p "$OUT"
 if [ -e "$OUT/control.sock" ]; then
     echo "Refusing to reuse an existing control socket: $OUT/control.sock" >&2
@@ -42,10 +46,19 @@ head -c 60000 /dev/urandom > "$OUT/POD.BIN"
 mcopy -i "$OUT/pod.img" "$OUT/POD.BIN" ::/POD.BIN
 head -c 50000 /dev/urandom > "$OUT/HOST.BIN"
 
-DRV=$(basename "$ORIG" | tr a-z A-Z)
-printf 'DEVICE=%s\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' "$DRV" > "$OUT/CONFIG.SYS"
+if [ -n "$ORIG" ]; then
+    DRV=$(basename "$ORIG" | tr a-z A-Z)
+    printf 'DEVICE=%s\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' "$DRV" > "$OUT/CONFIG.SYS"
+    SCAN=REM
+else
+    DRV=PORTASPI.SYS
+    printf 'DEVICE=PORTASPI.SYS /V %s\r\nDEVICE=ASPIFDD.SYS\r\nLASTDRIVE=Z\r\nSHELL=COMMAND.COM /P\r\n' \
+        "$MGROPT" > "$OUT/CONFIG.SYS"
+    SCAN=ASPISCAN
+fi
 cat > "$OUT/AUTOEXEC.BAT" <<BAT
 @ECHO OFF
+$SCAN > AUX
 DIR $LETTER: > AUX
 COPY $LETTER:\\POD.BIN A:\\POD.BIN > AUX
 IF NOT EXIST A:\\POD.BIN ECHO BPFDD read FAILED > AUX
@@ -57,7 +70,13 @@ BAT
 sed -i 's/$/\r/' "$OUT/AUTOEXEC.BAT"
 mdel -i "$OUT/boot.img" ::/BIG.BIN ::/AHCIASPI.SYS 2>/dev/null || true
 mcopy -o -i "$OUT/boot.img" "$OUT/CONFIG.SYS" "$OUT/AUTOEXEC.BAT" "$OUT/HOST.BIN" ::/
-mcopy -o -i "$OUT/boot.img" "$ORIG" ::/"$DRV"
+if [ -n "$ORIG" ]; then
+    mcopy -o -i "$OUT/boot.img" "$ORIG" ::/"$DRV"
+else
+    mcopy -o -i "$OUT/boot.img" "$MGR" ::/PORTASPI.SYS
+    mcopy -o -i "$OUT/boot.img" "$OPENASPI/build/dos/ASPIFDD.SYS" \
+        "$OPENASPI/build/dos/ASPISCAN.COM" ::/
+fi
 ROOT=$OPENASPI
 source "$OPENASPI/tests/86box_run.sh"
 run_86box_dos --done 'BPFDD DONE' --expect 'BPFDD copy passed' --count 1 \

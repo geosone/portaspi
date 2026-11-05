@@ -1,6 +1,6 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
-**Status: ZIP drives, LS-120, BackPack CD-ROM, OnSpec, EPAT, EPIA, BackPack and Freecom.**
+**Status: ZIP drives, LS-120, BackPack CD-ROM and floppy drive, OnSpec, EPAT, EPIA, BackPack and Freecom.**
 `PORTASPI.SYS` 0.5
 drives Iomega's parallel port ZIP drives in nibble, PS/2 and EPP mode: the
 ZIP 100 (PPA chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives
@@ -13,7 +13,11 @@ Freecom's two bridges, the Power adapter and the IQ cable (nibble and PS/2
 mode), it drives an ATAPI drive or a plain ATA hard disk:
 SCSI commands are translated to ATA (READ/WRITE/VERIFY SECTORS in LBA or
 CHS, INQUIRY and READ CAPACITY from IDENTIFY DEVICE, sense data from the
-error register). Everything else below is still the plan.
+error register). The BackPack floppy drive, a 765 floppy controller behind
+the BackPack (nibble and PS/2 mode), becomes a removable SCSI disk for
+OpenASPI's `ASPIFDD.SYS`: the disk's format is found with READ ID, sectors
+go a track at a time through the pod's buffer. Everything else below is
+still the plan.
 
 `PORTASPI.SYS` is an ASPI manager (device `SCSIMGR$`) for DOS. It is meant
 to make old devices on the parallel port and the floppy controller
@@ -27,6 +31,7 @@ unchanged:
 |---|---|---|
 | ZIP 100/250 parallel, SuperDisk parallel, EZ-135/EZ-Flyer parallel | removable direct access device | `ASPIFDD.SYS`, `EXFAT.SYS`, `ASPIFMT`, `ASPIDD` |
 | Parallel port hard disks (Backpack, Freecom, ...) | direct access device | `ASPIDSK.SYS` |
+| BackPack floppy drive | removable direct access device | `ASPIFDD.SYS` |
 | Parallel port CD-ROM | CD-ROM device | `ASPICDA.SYS`, SHSUCDX, CD audio |
 | Parallel port and floppy tape drives | sequential access device | `ASPITAP.SYS`, [OpenTape](https://github.com/geosone/OpenTape) |
 | The floppy drive itself (optional) | removable direct access device | `ASPIDD` for disk images of odd formats |
@@ -89,6 +94,10 @@ SHSUCDX read the CD and copy a file from it, which the host compares
 (`tests/dos_86box_bpck.sh`; `ORIG=path/BPCDDRV.SYS` runs Micro Solutions'
 own driver instead, as a black box against the 86Box model: version 4.02
 of 2002 passes, 2.13 of 1998 hangs at init).
+`tests/dos_86box_bpfdd.sh` takes the BackPack floppy drive with a 1.44 MB
+disk through `ASPIFDD.SYS` (`MGROPT=/M:NIBBLE` or `/M:PS2`), or with
+`ORIG=path/BACKPACK.SYS` through Micro Solutions' own driver; DOS reads a
+file from it and writes one, the host compares both and runs `fsck.fat`.
 `make test-on26` boots with an ATA hard disk behind an OnSpec 90c26:
 OpenASPI's `ASPIDSK.SYS` mounts its FAT16 partition, DOS reads and writes
 it and the host compares the files and checks the file system
@@ -138,7 +147,9 @@ emulates several of these devices, so much can be tested without hardware:
   QIC-3020; cartridges QIC-80, QIC-3010/3020, Travan TR-1 to TR-3, Ditto
   2 to 7 GB; `src/device/lpt_ditto.c`),
 - the Micro Solutions BackPack CD-ROM (BPCK protocol;
-  `src/device/lpt_bpck.c`),
+  `src/device/lpt_bpck.c`) and, on the `lpt-bpck-link` branch of
+  github.com/geosone/86Box (86Box PR #8733), the BackPack floppy drive
+  (`src/device/lpt_bpfdd.c`),
 - the Shuttle EPAT bridge with an Imation SuperDisk LS-120 (Imation's own
   DOS driver works on it; `src/device/lpt_epat.c`),
 - the Iomega ZIP 100 (PPA) and ZIP 250 / ZIP Plus (IMM) parallel port

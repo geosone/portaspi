@@ -15,6 +15,7 @@
 
 bk_pc           db      0               ; the control register as written
 bk_unit         db      0               ; chain address
+bk_fdd          db      0               ; a floppy pod: no ESS setup
 
 ; w2(AL)
 bk_w2:  mov     [bk_pc], al
@@ -134,6 +135,8 @@ bpck_connect:
 .m:     call    bpck_wr
         mov     ax, 0508h
         call    bpck_wr
+        cmp     byte [bk_fdd], 0        ; bpck.c does it for PI_PCD only;
+        jne     .out                    ; 41h-47h are the floppy pod's 765
         mov     ax, 4610h               ; "fiddle with ESS logic ???"
         call    bpck_wr
         mov     ax, 4C38h
@@ -146,7 +149,7 @@ bpck_connect:
         call    bpck_wr
         mov     ax, 4E08h
         call    bpck_wr
-        pop     ax
+.out:   pop     ax
         ret
 
 ; bpck_disconnect()
@@ -162,15 +165,28 @@ bpck_disconnect:
 
 ; bpck_read_block(): CX bytes to ES:DI
 bpck_get:
-        push    bx
-        cmp     byte [lpt_mode], MODE_PS2
-        je      .ps2
         mov     ax, 0440h               ; mode 0
-        call    bpck_wr
+        cmp     byte [lpt_mode], MODE_PS2
+        jne     .m
+        mov     al, 50h                 ; mode 1
+.m:     call    bpck_wr
         mov     al, 40h
+        call    bk_sget
+        mov     ax, 0400h
+        cmp     byte [lpt_mode], MODE_PS2
+        jne     .e
+        mov     al, 10h
+.e:     jmp     bpck_wr
+
+; CX bytes from register AL to ES:DI, the register addressed once (the
+; pod counts the bytes of a multi-byte register from its address)
+bk_sget:
+        push    bx
         out     dx, al
         T2      2
-.n:     T2      4
+        cmp     byte [lpt_mode], MODE_PS2
+        je      .ps2
+.n:     T2      4                       ; mode 0
         call    bk_r1
         mov     bl, al
         T2      4
@@ -180,24 +196,16 @@ bpck_get:
         call    bk_j44
         stosb
         loop    .n
-        mov     ax, 0400h
-        call    bpck_wr
         pop     bx
         ret
-.ps2:   mov     ax, 0450h               ; mode 1
-        call    bpck_wr
-        mov     al, 40h
-        out     dx, al
-        T2      2
-        T2      20h
+.ps2:   call    bk_e2                   ; mode 1: INIT clocks a byte out
+        T2      20h                     ; only with STROBE clear
 .b:     T2      4
         in      al, dx
         stosb
         loop    .b
         T2      1
         T2      20h
-        mov     ax, 0410h
-        call    bpck_wr
         pop     bx
         ret
 
@@ -209,19 +217,71 @@ bpck_put:
         mov     al, 50h                 ; mode 1
 .m:     call    bpck_wr
         mov     al, 40h
-        out     dx, al
-        T2      2
-        T2      1
-.l:     mov     al, [es:di]
-        inc     di
-        out     dx, al
-        T2      4
-        loop    .l
+        call    bk_sput
         mov     ax, 0400h
         cmp     byte [lpt_mode], MODE_PS2
         jne     .e
         mov     al, 10h
 .e:     jmp     bpck_wr
+
+; CX bytes from ES:DI to register AL, the register addressed once.
+; STROBE is set for the bytes and cleared after them, so that the next
+; transfer finds it as bpck_wr leaves it.
+bk_sput:
+        out     dx, al
+        T2      2
+        call    bk_o2
+.l:     mov     al, [es:di]
+        inc     di
+        out     dx, al
+        T2      4
+        loop    .l
+        jmp     bk_e2
+
+; The 93C46 the pod identifies itself from: register 06h carries its
+; lines (08h enable, 04h CS, 02h DI, 01h CLK), register 00h bit 7 is DO.
+; AL = word address -> AX = the word.  Connected.
+bk_ee_read:
+        push    bx
+        push    cx
+        push    si
+        movzx   bx, al
+        and     bl, 3Fh
+        or      bx, 180h                ; start bit, READ (10b), address
+        mov     ax, 0608h               ; CS low ends anything under way
+        call    bpck_wr
+        mov     cx, 9
+.cmd:   mov     si, 060Ch               ; CS (bpck_wr leaves AL changed)
+        test    bx, 100h
+        jz      .d
+        or      si, 02h                 ; DI
+.d:     mov     ax, si
+        call    bpck_wr
+        mov     ax, si
+        or      al, 01h                 ; CLK rises: DI is taken
+        call    bpck_wr
+        shl     bx, 1
+        loop    .cmd
+        xor     bx, bx
+        mov     cx, 16
+.data:  mov     ax, 060Ch
+        call    bpck_wr
+        mov     ax, 060Dh               ; CLK rises: the next bit on DO
+        call    bpck_wr
+        mov     ah, 00h
+        call    bpck_rd
+        shl     al, 1
+        rcl     bx, 1
+        loop    .data
+        mov     ax, 0608h
+        call    bpck_wr
+        mov     ax, 0600h
+        call    bpck_wr
+        mov     ax, bx
+        pop     si
+        pop     cx
+        pop     bx
+        ret
 
 ;-----------------------------------------------------------------------------
 ; bpck_init: a BackPack on lpt_base?  As bpck_probe_unit() for units 0 to
@@ -230,7 +290,10 @@ bpck_put:
 ; 5-3).  Then the drive's task file must keep what is written to it, as
 ; for the EPAT, and the signature (or IDENTIFY DEVICE) tells an ATAPI
 ; drive from an ATA disk (the BackPack hard drive).  CF if there is none.
-; -> dev_ata: 1 for an ATA disk, 0 for an ATAPI drive
+; A pod whose EEPROM type has bit 7 clear and whose 765 answers is the
+; BackPack floppy drive (fdc.inc).
+; -> dev_ata: 1 for an ATA disk, 0 for an ATAPI drive; dev_fdd: 1 for the
+;    floppy drive
 ;-----------------------------------------------------------------------------
 bpck_init:
         mov     dx, [lpt_base]
@@ -282,6 +345,23 @@ bpck_init:
         mov     al, 4Ch
         call    bk_w2
         mov     [bk_unit], bl
+        mov     byte [bk_fdd], 1        ; first without the CD-ROM setup
+        call    bpck_connect
+        mov     al, 2                   ; EEPROM word 2: the pod's type,
+        call    bk_ee_read              ; 80h set for an IDE drive behind it
+        test    al, 80h
+        jnz     .ide
+        call    fdc_probe               ; a floppy pod: its 765 answers
+        jc      .ide
+        mov     al, 3                   ; word 3: drive 0, type and flags
+        call    bk_ee_read
+        mov     [fd_dtype], al
+        mov     byte [dev_fdd], 1
+        call    bpck_disconnect
+        clc
+        ret
+.ide:   call    bpck_disconnect
+        mov     byte [bk_fdd], 0
         call    bpck_connect
         mov     ax, (TF_DRVHD << 8) | 0A0h
         call    tf_wr
