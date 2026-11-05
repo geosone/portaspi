@@ -17,6 +17,7 @@
 # MSCDEX=path: Microsoft's MSCDEX.EXE (not shipped) as the redirector
 # instead of SHSUCDX. BPCDDRV.SYS 2.13 needs it: with SHSUCDX it reads
 # sector 80000058h for 58h and fails.
+# BPUNIT: the BackPack's chain address (unit), default 7.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OPENASPI=${OPENASPI:-$ROOT/../OpenAspi}
@@ -30,6 +31,7 @@ BPOPT=${BPOPT:-}
 ORIGDEV=${ORIGDEV:-BPCDDRV\$}
 MSCDEX=${MSCDEX:-}
 BRIDGE=${BRIDGE:-bpck}
+BPUNIT=${BPUNIT:-}
 OUT=${OUT:-$ROOT/build/86box-bpck}
 test -x "$BOX"
 test -d "$ROMDIR"
@@ -53,6 +55,9 @@ grep -q '^cdrom_01_parameters = 1, lpt$' "$OUT/86box.cfg"
 if [ "$BRIDGE" != bpck ]; then
     sed -i "s/^cdrom_01_lpt_port = 0$/&\ncdrom_01_lpt_bridge = $BRIDGE/" "$OUT/86box.cfg"
     grep -q "^cdrom_01_lpt_bridge = $BRIDGE$" "$OUT/86box.cfg"
+fi
+if [ -n "$BPUNIT" ]; then
+    printf '\n[Micro Solutions BackPack Bantam CD-ROM #1]\nunit = %s\n' "$BPUNIT" >> "$OUT/86box.cfg"
 fi
 case "$BRIDGE" in
     on26) NAME="OnSpec 90c26" ;;
