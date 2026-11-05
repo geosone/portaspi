@@ -18,8 +18,8 @@
 # instead of SHSUCDX. BPCDDRV.SYS 2.13 needs it: with SHSUCDX it reads
 # sector 80000058h for 58h and fails.
 # BRIDGE=bpmcd: the first BackPack CD-ROMs (160550, 162550), a Mitsumi
-# FX001 drive behind the BackPack (lpt-bpmcd branch of 86Box), with
-# ORIG= Micro Solutions' BPCDDRV.SYS 1.06 and MSCDEX=.
+# FX001 drive behind the BackPack (86Box's lpt_bpmcd), through PORTASPI or
+# with ORIG= Micro Solutions' BPCDDRV.SYS 1.06 and MSCDEX=.
 # BPUNIT: the BackPack's chain address (unit), default 7.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

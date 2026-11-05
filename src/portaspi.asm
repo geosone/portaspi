@@ -420,6 +420,8 @@ srb_exec:
         jne     .go
         cmp     byte [dev_fdd], 0
         jne     .go
+        cmp     byte [dev_mcd], 0
+        jne     .go
         call    translate_cdb           ; ATAPI drive
         jnc     .xl
         jmp     .invalid
@@ -572,6 +574,7 @@ auto_sense:
 %include "fc.inc"
 %include "ata.inc"
 %include "fdc.inc"
+%include "mcd.inc"
 %include "atapi.inc"
 
 ;-----------------------------------------------------------------------------

@@ -204,6 +204,8 @@ norm_buf:
 dev_exec:
         cmp     byte [dev_fdd], 0       ; the BackPack's floppy drive
         jne     fdc_exec
+        cmp     byte [dev_mcd], 0       ; the first BackPack CD-ROMs' Mitsumi
+        jne     mcd_exec
         cmp     byte [dev_ata], 0       ; an ATA disk behind a bridge
         jne     ata_exec
         cmp     byte [lpt_chip], CHIP_EPAT

@@ -15,7 +15,7 @@
 
 bk_pc           db      0               ; the control register as written
 bk_unit         db      0               ; chain address
-bk_fdd          db      0               ; a floppy pod: no ESS setup
+bk_fdd          db      0               ; a floppy or Mitsumi pod: no ESS setup
 
 ; w2(AL)
 bk_w2:  mov     [bk_pc], al
@@ -291,9 +291,10 @@ bk_ee_read:
 ; for the EPAT, and the signature (or IDENTIFY DEVICE) tells an ATAPI
 ; drive from an ATA disk (the BackPack hard drive).  CF if there is none.
 ; A pod whose EEPROM type has bit 7 clear and whose 765 answers is the
-; BackPack floppy drive (fdc.inc).
+; BackPack floppy drive (fdc.inc).  Type 81h whose drive answers is one of
+; the first BackPack CD-ROMs, a Mitsumi drive (mcd.inc).
 ; -> dev_ata: 1 for an ATA disk, 0 for an ATAPI drive; dev_fdd: 1 for the
-;    floppy drive
+;    floppy drive; dev_mcd: 1 for the Mitsumi drive
 ;-----------------------------------------------------------------------------
 bpck_init:
         mov     dx, [lpt_base]
@@ -349,6 +350,8 @@ bpck_init:
         call    bpck_connect
         mov     al, 2                   ; EEPROM word 2: the pod's type,
         call    bk_ee_read              ; 80h set for an IDE drive behind it
+        cmp     al, 81h                 ; 81h: a Mitsumi drive
+        je      .mcd
         test    al, 80h
         jnz     .ide
         call    fdc_probe               ; a floppy pod: its 765 answers
@@ -357,6 +360,12 @@ bpck_init:
         call    bk_ee_read
         mov     [fd_dtype], al
         mov     byte [dev_fdd], 1
+        call    bpck_disconnect
+        clc
+        ret
+.mcd:   call    mcd_probe               ; its drive must answer
+        jc      .ide
+        mov     byte [dev_mcd], 1
         call    bpck_disconnect
         clc
         ret

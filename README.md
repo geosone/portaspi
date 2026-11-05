@@ -16,8 +16,11 @@ CHS, INQUIRY and READ CAPACITY from IDENTIFY DEVICE, sense data from the
 error register). The BackPack floppy drive, a 765 floppy controller behind
 the BackPack (nibble and PS/2 mode), becomes a removable SCSI disk for
 OpenASPI's `ASPIFDD.SYS`: the disk's format is found with READ ID, sectors
-go a track at a time through the pod's buffer. Everything else below is
-still the plan.
+go a track at a time through the pod's buffer. The first BackPack CD-ROMs
+(160550, 162550), a Mitsumi FX001 or FX001D behind the BackPack (nibble
+and PS/2 mode), become a SCSI CD-ROM drive: READ (10) a sector at a time,
+READ CAPACITY and READ TOC from the drive's disc information (the first
+track and the lead-out only). Everything else below is still the plan.
 
 `PORTASPI.SYS` is an ASPI manager (device `SCSIMGR$`) for DOS. It is meant
 to make old devices on the parallel port and the floppy controller
@@ -93,7 +96,9 @@ LS-120 behind the EPAT (OpenASPI's `tests/dos_86box_ls120.sh LPT=1 MGR=`).
 SHSUCDX read the CD and copy a file from it, which the host compares
 (`tests/dos_86box_bpck.sh`; `ORIG=path/BPCDDRV.SYS` runs Micro Solutions'
 own driver instead, as a black box against the 86Box model: version 4.02
-of 2002 passes, 2.13 of 1998 hangs at init).
+of 2002 passes, 2.13 of 1998 hangs at init). `BRIDGE=bpmcd` takes the
+Mitsumi BackPack CD-ROM instead (86Box with the `lpt_bpmcd` device), also
+with `ORIG=path/BPCDDRV.SYS` version 1.06 of 1994 and `MSCDEX=`.
 `tests/dos_86box_bpfdd.sh` takes the BackPack floppy drive with a 1.44 MB
 disk through `ASPIFDD.SYS` (`MGROPT=/M:NIBBLE` or `/M:PS2`), or with
 `ORIG=path/BACKPACK.SYS` through Micro Solutions' own driver; DOS reads a
