@@ -120,7 +120,7 @@ and friq.c); the CD-ROM test takes the same `BRIDGE=` (and `on26`,
 `epia`), with Freecom's POWER-CD.SYS (IQ) or G735.SYS (Power) as `ORIG=`.
 `ORIG=` runs a
 vendor driver against the model, `ORIGDSK=` the block driver after it:
-ValuStor's VSMOBILE.SYS and OnSpec's EGIDE100.SYS (90c26), Shuttle's
+ValuStor's VSMOBILE.SYS (V2.00 and V3.26) and OnSpec's EGIDE100.SYS (90c26), Shuttle's
 EPATHD.SYS and EPIAHD.SYS with ASPIDSK or Shuttle's ASPIHDRM.SYS, and
 Micro Solutions' BPHDDRV.SYS (2002) on the BackPack.
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
