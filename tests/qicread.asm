@@ -18,6 +18,12 @@
 CHUNK   equ     12000                   ; not a multiple of the sector size
 
 start:  cld
+        xor     ax, ax                  ; an invalid opcode: say where
+        mov     es, ax
+        mov     word [es:6*4], int6
+        mov     [es:6*4+2], cs
+        push    ds
+        pop     es
         call    crc_init
         mov     dx, mgr_name            ; the ASPI entry point
         mov     ax, 3D00h
@@ -118,6 +124,30 @@ found:  mov     cx, 5                   ; TEST UNIT READY: the UNIT ATTENTION
 .nos:   mov     dx, msg_done
         call    puts
         mov     ax, 4C00h
+        int     21h
+
+int6:   push    cs
+        pop     ds
+        mov     bp, sp
+        mov     dx, msg_ud
+        call    puts
+        movzx   eax, word [bp+2]
+        call    puthex4
+        mov     al, ':'
+        call    putc
+        movzx   eax, word [bp]
+        call    puthex4
+        mov     al, ' '
+        call    putc
+        mov     es, [bp+2]
+        mov     si, [bp]
+        mov     cx, 8
+.b:     movzx   eax, byte [es:si]
+        call    puthex
+        inc     si
+        loop    .b
+        call    crlf
+        mov     ax, 4C02h
         int     21h
 
 no_aspi:
@@ -328,6 +358,10 @@ puthex: push    eax                     ; " xx"
         mov     cx, 2
         rol     eax, 24
         jmp     hexd
+puthex4:
+        rol     eax, 16
+        mov     cx, 4
+        jmp     hexd
 puthex8:
         mov     cx, 8                   ; EAX, eight digits
 hexd:   rol     eax, 4
@@ -351,6 +385,7 @@ msg_back        db      'BACK ok', 13, 10, '$'
 msg_badback     db      'BACK FAILED', 13, 10, '$'
 msg_spaced      db      'SPACED$'
 msg_err         db      'ERR$'
+msg_ud          db      'QICREAD: invalid opcode at $'
 msg_done        db      'QICREAD DONE', 13, 10, '$'
 msg_crlf        db      13, 10, '$'
 

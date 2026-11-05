@@ -23,7 +23,9 @@ READ CAPACITY and READ TOC from the drive's disc information (the first
 track and the lead-out only). With `/F` a QIC-117 floppy tape drive on the
 floppy controller becomes a SCSI tape drive for reading: each volume of a
 QIC-80 cartridge (the volume table of QIC-80/QIC-113) is a tape file,
-read with READ (6) of variable blocks, with filemarks between them.
+read with READ (6) of variable blocks, with filemarks between them. The
+Iomega Ditto on the parallel port, the same drive and a 765 behind a
+BackPack, is read the same way; PORTASPI finds it without `/F`.
 Everything else below is still the plan.
 
 `PORTASPI.SYS` is an ASPI manager (device `SCSIMGR$`) for DOS. It is meant
@@ -77,6 +79,11 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   yet. While it reads PORTASPI takes IRQ 6 and DMA channel 2, and keeps the
   BIOS from turning the floppy motors off under it; the resident part grows
   by the 32 KB segment buffer.
+- An Iomega Ditto on the port is found with the BackPack units: a pod
+  whose 765 (at registers 40h-47h) shows its interrupt in register 00h.
+  Its tape is SCSI ID 0 and is read like the one on `/F`: the segments go
+  through the pod's 128 KB buffer instead of DMA channel 2. Nibble and
+  PS/2 mode.
 - PORTASPI finds the chip on its own. It tries the IMM first (it answers
   IEEE 1284.3 command packets), then the EPAT (the drive's task file must
   keep what is written to it), then the BackPack (units 0 to 7, which
@@ -147,6 +154,10 @@ reversed track 1, and four sectors damaged after their parity was written
 (data and parity sectors), which the reader must correct. `QICREAD.COM` (`tests/qicread.asm`) reads every volume
 through ASPI and prints its size and CRC-32, spaces over filemarks and
 reads again; the host compares. `TAPE=` takes another cartridge image.
+`DITTO=1` puts the cartridge into an Iomega Ditto 2GB on LPT1 instead
+(86Box's `lpt_ditto.c`; its log of every port access is on in master,
+which makes the run take hours, so the test is meant for a build with it
+off).
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.

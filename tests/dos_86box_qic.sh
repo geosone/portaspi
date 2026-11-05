@@ -11,9 +11,11 @@
 # blank qic80_dc2120.img of https://github.com/dbrant/ftape (blanktapes/):
 # no volumes.
 # UNIT: the drive select line, default 1.  MGROPT: more PORTASPI options.
-# 86Box master since the floppy refactor of 2026-09-26 crashes when the
-# tape starts to stream (its command and motion timers get no drive); the
-# fix is the fdd-tape-timer-priv branch of github.com/geosone/86Box.
+# DITTO=1: an Iomega Ditto 2GB on LPT1 instead (86Box's lpt_ditto.c, the
+# drive and its 765 behind a BackPack) with the same cartridge; PORTASPI
+# finds it without /F.
+# Needs 86Box master of 2026-11-05 or later (86Box/86Box#8748: before it
+# the emulator crashed when the tape started to stream).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OPENASPI=${OPENASPI:-$ROOT/../OpenAspi}
@@ -66,7 +68,19 @@ if len(names) > 1:
 PY
 sed -e '/^cdrom_01_/d' -e "s/^fdd_02_type = none$/fdd_02_type = ${FDD2:-none}/" \
     "$OPENASPI/tests/fixtures/86box-upc.cfg" > "$OUT/86box.cfg"
-cat >> "$OUT/86box.cfg" <<CFG
+if [ "${DITTO:-0}" = 1 ]; then
+    sed -i 's/^lpt1_enabled = 0$/lpt1_enabled = 1/' "$OUT/86box.cfg"
+    cat >> "$OUT/86box.cfg" <<CFG
+
+[Other removable devices]
+tape_01_parameters = 5, lpt
+tape_01_medium_type = 12
+tape_01_lpt_port = 0
+tape_01_image_path = tape.img
+CFG
+    TAPEOPT=
+else
+    cat >> "$OUT/86box.cfg" <<CFG
 
 [Other removable devices]
 tape_01_parameters = 4, fdc
@@ -74,7 +88,9 @@ tape_01_medium_type = 12
 tape_01_fdd_unit = ${UNIT:-1}
 tape_01_image_path = tape.img
 CFG
-printf 'DEVICE=PORTASPI.SYS /V /F:%s %s\r\nSHELL=COMMAND.COM /P\r\n' "${UNIT:-1}" \
+    TAPEOPT=/F:${UNIT:-1}
+fi
+printf 'DEVICE=PORTASPI.SYS /V %s %s\r\nSHELL=COMMAND.COM /P\r\n' "$TAPEOPT" \
     "$MGROPT" > "$OUT/CONFIG.SYS"
 cat > "$OUT/AUTOEXEC.BAT" <<BAT
 @ECHO OFF

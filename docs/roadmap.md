@@ -36,9 +36,10 @@
    the Ditto parallel port drive. **QIC-80 on the floppy controller is
    read** (`/F`, tested with 86Box's Colorado 250): the volumes of the
    volume table as tape files, bad sectors skipped, a damaged sector a
-   segment corrected from the parity. Still to do: erasures (up to three
-   sectors with CRC errors; 86Box's tape has no such errors to test with),
-   QIC-3010/3020 rates and wide formats, the Ditto parallel.
+   segment corrected from the parity; **and so is the Ditto on the
+   parallel port** (86Box's Ditto 2GB with a QIC-80 cartridge). Still to
+   do: erasures (up to three sectors with CRC errors; 86Box's tape has no
+   such errors to test with), QIC-3010/3020 rates and wide formats.
 4. **Floppy tape, writing and formatting**: segments with ECC, bad sector
    map, volume table, streaming.
 5. **Optional**: the floppy drive as a SCSI disk; proprietary CD-ROM

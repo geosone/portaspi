@@ -222,6 +222,8 @@ dev_exec:
 dev_bus_reset:
         cmp     byte [dev_fdd], 0       ; nothing to reset: no bus
         jne     .out
+        cmp     byte [qt_bp], 0         ; the Ditto
+        jne     .out
         cmp     byte [dev_ata], 0
         je      .bus
 .out:   ret

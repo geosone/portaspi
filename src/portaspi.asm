@@ -831,6 +831,8 @@ tape_setup:
         mov     al, [opt_tape]
         or      al, al
         jz      .none
+        cmp     byte [qt_bp], 0         ; one tape drive: a Ditto was found
+        jne     .none
         dec     al
         mov     [qt_unit], al
         mov     ax, resident_end

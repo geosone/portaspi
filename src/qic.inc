@@ -47,6 +47,21 @@ QT_CCR          equ     7               ; configuration control (write)
 
 QT_DOR_RUN      equ     0Ch             ; DMA, not in reset
 
+; The Iomega Ditto: a QIC-117 drive and a 765 behind a BackPack.  The
+; 765 is at 40h-47h, register 00h bit 0 is its interrupt once register
+; 0Fh has 10h, READ DATA puts the sectors into the 128 KB buffer from the
+; address in 2Ch (three bytes, low first) for the length less one in 30h;
+; the host reads it through A0h from the address in 28h.  The protocol of
+; 86Box's lpt_ditto.c.
+BP_REG_STAT     equ     00h
+BP_STAT_INT     equ     01h
+BP_REG_IRQCTL   equ     0Fh
+BP_IRQ_SOFT     equ     10h
+BP_REG_MEMADDR  equ     28h
+BP_REG_DMAADDR  equ     2Ch
+BP_REG_DMASIZE  equ     30h
+BP_REG_MEMORY   equ     0A0h
+
 ; QIC-117 commands (pulses)
 QIC_RESET       equ     1
 QIC_FORWARD     equ     10              ; logical forward: stream
@@ -101,6 +116,7 @@ SNS_BECOMING    equ     02h | (04h << 8) | (01h << 16)
 qt_base         dw      3F0h
 qt_unit         db      0               ; drive select line
 qt_id           db      0FFh            ; SCSI ID, 0FFh: no tape drive
+qt_bp           db      0               ; 1: the 765 behind a BackPack (Ditto)
 qt_cyl          db      0               ; the controller's cylinder
 qt_vendor       dw      0
 qt_rom          db      0
@@ -587,8 +603,8 @@ qt_rewind:
         call    qt_ready_wait
         mov     dword [qt_wait], 0
         jc      .o
-        mov     byte [qt_track], 0
-        mov     word [qt_next], 0FFFFh
+        mov     byte [qt_track], 0FFh   ; drives differ in where the head
+        mov     word [qt_next], 0FFFFh  ; goes: seek it to the track again
         clc
 .o:     ret
 .hw:    mov     eax, SNS_QT_HW
@@ -1344,6 +1360,28 @@ qt_run:
         call    qt_out
         jc      .f
         call    qt_result
+        jc      .o
+        cmp     byte [qt_bp], 0
+        je      .o
+        push    es                      ; the Ditto: from its buffer
+        movzx   cx, bh
+        shl     cx, 10
+        mov     dx, [lpt_base]
+        mov     ax, di
+        sub     ax, [qt_buf]
+        movzx   eax, ax
+        push    bx
+        mov     bl, BP_REG_MEMADDR
+        call    fd_set3
+        pop     bx
+        push    cs
+        pop     es
+        push    di                      ; the caller moves DI on
+        mov     al, BP_REG_MEMORY
+        call    bk_sget
+        pop     di
+        pop     es
+        clc
         jmp     .o
 .f:     mov     al, 3
 .o:     pop     dx
@@ -1354,7 +1392,25 @@ qt_run:
 ; DMA channel 2, controller to memory: CX bytes to CS:DI
 qt_dma:
         push    eax
+        cmp     byte [qt_bp], 0
+        je      .isa
+        push    bx                      ; the Ditto: into its buffer, at the
+        push    dx                      ; offset the data has in ours
+        mov     dx, [lpt_base]
         mov     ax, di
+        sub     ax, [qt_buf]
+        movzx   eax, ax
+        mov     bl, BP_REG_DMAADDR
+        call    fd_set3
+        movzx   eax, cx
+        dec     eax
+        mov     bl, BP_REG_DMASIZE
+        call    fd_set3
+        pop     dx
+        pop     bx
+        pop     eax
+        ret
+.isa:   mov     ax, di
         sub     ax, [qt_buf]
         movzx   eax, ax
         add     eax, [qt_bufphys]
@@ -1478,20 +1534,54 @@ qt_command:
 ; selects drive 0 with it.  Its motors are off now, and stay so.
 qt_select:
         push    ax
-        push    dx
+        cmp     byte [qt_bp], 0
+        jne     .dor
         push    ds
         push    word 40h
         pop     ds
         mov     byte [40h], 0           ; the motor time-out
         and     byte [3Fh], 0F0h        ; the motors that run
         pop     ds
-        mov     dx, [qt_base]
-        add     dx, QT_DOR
-        mov     al, [qt_unit]
+.dor:   mov     al, [qt_unit]
         or      al, QT_DOR_RUN
-        out     dx, al
-        pop     dx
+        mov     ah, QT_DOR
+        call    qt_wr
         pop     ax
+        ret
+
+; the controller's register AH (0-7): on the ISA bus at [qt_base], or the
+; Ditto's at 40h-47h of its BackPack (connected).  qt_rd -> AL, qt_wr AL.
+qt_rd:  push    dx
+        cmp     byte [qt_bp], 0
+        jne     .bp
+        movzx   dx, ah
+        add     dx, [qt_base]
+        in      al, dx
+        pop     dx
+        ret
+.bp:    push    bx
+        mov     bh, ah
+        add     ah, 40h
+        mov     dx, [lpt_base]
+        call    bpck_rd
+        mov     ah, bh
+        pop     bx
+        pop     dx
+        ret
+
+qt_wr:  push    dx
+        push    ax
+        cmp     byte [qt_bp], 0
+        jne     .bp
+        movzx   dx, ah
+        add     dx, [qt_base]
+        out     dx, al
+        jmp     .o
+.bp:    add     ah, 40h
+        mov     dx, [lpt_base]
+        call    bpck_wr
+.o:     pop     ax
+        pop     dx
         ret
 
 ;-----------------------------------------------------------------------------
@@ -1506,9 +1596,8 @@ qt_out: push    eax
         mov     bl, al
         call    get_ticks
         mov     esi, eax
-        mov     dx, [qt_base]
-        add     dx, QT_MSR
-.l:     in      al, dx
+.l:     mov     ah, QT_MSR
+        call    qt_rd
         and     al, 0C0h
         cmp     al, 80h                 ; RQM, to the controller
         je      .w
@@ -1518,9 +1607,9 @@ qt_out: push    eax
         jbe     .l
         stc
         jmp     .o
-.w:     inc     dx                      ; the data register
+.w:     mov     ah, QT_MSR + 1          ; the data register
         mov     al, bl
-        out     dx, al
+        call    qt_wr
         clc
 .o:     pop     esi
         pop     dx
@@ -1535,9 +1624,8 @@ qt_in:  push    dx
         mov     bh, ah                  ; AH is kept
         call    get_ticks
         mov     esi, eax
-        mov     dx, [qt_base]
-        add     dx, QT_MSR
-.l:     in      al, dx
+.l:     mov     ah, QT_MSR
+        call    qt_rd
         and     al, 0C0h
         cmp     al, 0C0h                ; RQM, from the controller
         je      .r
@@ -1547,8 +1635,8 @@ qt_in:  push    dx
         jbe     .l
         stc
         jmp     .o
-.r:     inc     dx
-        in      al, dx
+.r:     mov     ah, QT_MSR + 1
+        call    qt_rd
         clc
 .o:     mov     ah, bh
         pop     ebx
@@ -1571,7 +1659,19 @@ qt_st3: call    qt_select
 ; handlers take the interrupt status themselves (SENSE INTERRUPT STATUS),
 ; and a seek's result would be lost.
 qt_hook:
-        push    ax
+        cmp     byte [qt_bp], 0
+        je      .isa
+        push    ax                      ; the Ditto: connect, and let
+        push    dx                      ; register 00h show its interrupt
+        mov     dx, [lpt_base]
+        call    bpck_connect
+        mov     ax, (BP_REG_IRQCTL << 8) | BP_IRQ_SOFT
+        call    bpck_wr
+        mov     word [qt_old0e+2], 1
+        pop     dx
+        pop     ax
+        ret
+.isa:   push    ax
         push    bx
         push    es
         xor     ax, ax
@@ -1591,7 +1691,14 @@ qt_hook:
         ret
 
 qt_unhook:
-        push    ax
+        cmp     byte [qt_bp], 0
+        je      .isa
+        push    dx
+        mov     dx, [lpt_base]
+        call    bpck_disconnect
+        pop     dx
+        ret
+.isa:   push    ax
         push    bx
         push    es
         xor     ax, ax
@@ -1629,9 +1736,19 @@ qt_wait_int:
         sti
         call    get_ticks
         mov     esi, eax
-.l:     cmp     byte [qt_irq], 0
+.l:     cmp     byte [qt_bp], 0
+        je      .isa
+        push    dx                      ; the Ditto: register 00h bit 0
+        mov     dx, [lpt_base]
+        mov     ah, BP_REG_STAT
+        call    bpck_rd
+        pop     dx
+        test    al, BP_STAT_INT
+        jnz     .ok
+        jmp     .t
+.isa:   cmp     byte [qt_irq], 0
         jne     .ok
-        call    get_ticks
+.t:     call    get_ticks
         sub     eax, esi
         cmp     eax, ebx
         jbe     .l
@@ -1698,14 +1815,15 @@ qt_reset:
         push    cx
         push    dx
         call    qt_int_clear
-        mov     dx, [qt_base]
-        add     dx, QT_DOR
         mov     al, [qt_unit]
-        out     dx, al                  ; reset
+        mov     ah, QT_DOR
+        call    qt_wr                   ; reset
         mov     cx, 2
         call    delay15
+        mov     al, [qt_unit]
         or      al, QT_DOR_RUN
-        out     dx, al
+        mov     ah, QT_DOR
+        call    qt_wr
         mov     ebx, QT_INT_TICKS
         call    qt_wait_int
         jc      .o
@@ -1722,17 +1840,18 @@ qt_reset:
         mov     al, 02h                 ; head load, DMA
         call    qt_out
         jc      .o
-        mov     dx, [qt_base]
-        add     dx, QT_CCR
+        mov     ah, QT_CCR
         xor     al, al                  ; 500 kbit/s
-        out     dx, al
+        call    qt_wr
         mov     byte [qt_cyl], 0
+        cmp     byte [qt_bp], 0
+        jne     .ok
         push    ds                      ; the BIOS must recalibrate its drives
         push    word 40h
         pop     ds
         and     byte [3Eh], 70h
         pop     ds
-        clc
+.ok:    clc
 .o:     pop     dx
         pop     cx
         pop     ebx
@@ -1772,12 +1891,14 @@ qt_buffer:
 ;-----------------------------------------------------------------------------
 qic_init:
         call    qt_gf_init
+        cmp     byte [qt_bp], 0
+        jne     .ctl
         mov     dx, [qt_base]
         add     dx, QT_MSR
         in      al, dx
         cmp     al, 0FFh                ; no controller
         je      .none
-        call    qt_hook
+.ctl:   call    qt_hook
         call    qic_probe
         pushf
         call    qt_unhook
@@ -1785,6 +1906,23 @@ qic_init:
         popf
         ret
 .none:  stc
+        ret
+
+; qt_ditto_probe: is the pod (connected) a Ditto: a 765 at 40h whose
+; interrupt shows in register 00h?  -> qt_bp = 1.  CF if not.
+qt_ditto_probe:
+        push    ax
+        push    dx
+        mov     byte [qt_bp], 1
+        mov     byte [qt_unit], 0
+        mov     dx, [lpt_base]
+        mov     ax, (BP_REG_IRQCTL << 8) | BP_IRQ_SOFT
+        call    bpck_wr
+        call    qt_reset
+        jnc     .o
+        mov     byte [qt_bp], 0
+.o:     pop     dx
+        pop     ax
         ret
 
 qic_probe:
@@ -1857,4 +1995,10 @@ qt_vendors      dw      0047h
                 db      'CONNER  '
                 dw      0005h
                 db      'CONNER  '
+                dw      8881h           ; Iomega: the Ditto's report
+                db      'IOMEGA  '
+                dw      8883h
+                db      'IOMEGA  '
+                dw      8885h
+                db      'IOMEGA  '
                 dw      0FFFFh

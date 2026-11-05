@@ -292,7 +292,9 @@ bk_ee_read:
 ; drive from an ATA disk (the BackPack hard drive).  CF if there is none.
 ; A pod whose EEPROM type has bit 7 clear and whose 765 answers is the
 ; BackPack floppy drive (fdc.inc).  Type 81h whose drive answers is one of
-; the first BackPack CD-ROMs, a Mitsumi drive (mcd.inc).
+; the first BackPack CD-ROMs, a Mitsumi drive (mcd.inc).  A pod with a
+; 765 whose interrupt shows in register 00h is an Iomega Ditto, a floppy
+; tape drive (qic.inc): the tape becomes SCSI ID 0.
 ; -> dev_ata: 1 for an ATA disk, 0 for an ATAPI drive; dev_fdd: 1 for the
 ;    floppy drive; dev_mcd: 1 for the Mitsumi drive
 ;-----------------------------------------------------------------------------
@@ -355,13 +357,30 @@ bpck_init:
         test    al, 80h
         jnz     .ide
         call    fdc_probe               ; a floppy pod: its 765 answers
-        jc      .ide
+        jc      .ditto
         mov     al, 3                   ; word 3: drive 0, type and flags
         call    bk_ee_read
         mov     [fd_dtype], al
         mov     byte [dev_fdd], 1
         call    bpck_disconnect
         clc
+        ret
+.ditto: call    qt_ditto_probe          ; an Iomega Ditto
+        jc      .ide
+        call    bpck_disconnect
+        mov     ax, [res_end]
+        call    qt_buffer
+        jc      .nodit
+        push    ax
+        call    qic_init
+        pop     ax
+        jc      .nodit
+        mov     [res_end], ax
+        mov     byte [qt_id], 0
+        clc
+        ret
+.nodit: mov     byte [qt_bp], 0
+        stc
         ret
 .mcd:   call    mcd_probe               ; its drive must answer
         jc      .ide
