@@ -1,6 +1,6 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
-**Status: ZIP drives, LS-120, BackPack CD-ROM and floppy drive, OnSpec, EPAT, EPIA, BackPack and Freecom; floppy tape reading and writing (formatted cartridges).**
+**Status: ZIP drives, LS-120, BackPack CD-ROM and floppy drive, OnSpec, EPAT, EPIA, BackPack and Freecom; floppy tape reading, writing and formatting.**
 `PORTASPI.SYS` 0.5
 drives Iomega's parallel port ZIP drives in nibble, PS/2 and EPP mode: the
 ZIP 100 (PPA chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives
@@ -90,7 +90,17 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   and any filemark (WRITE FILEMARKS), REWIND, SPACE or READ ends the
   volume and puts it into the volume table (QIC-113 entries in format
   code 6), dated from the BIOS clock. A full cartridge is VOLUME
-  OVERFLOW with EOM and the residue. Formatting is not done yet. The tape runs at 1 Mbit/s where the cartridge (not QIC-40), the
+  OVERFLOW with EOM and the residue. FORMAT MEDIUM formats the cartridge
+  (blank or not): the reference burst if it has none, every track while
+  it streams (the 765's FORMAT, 128-sector cylinders ended by the DMA
+  count as in ftape, gap 233, or 248 for the flex lengths), then the
+  header twice and an empty volume table. The tracks are those the drive
+  seeks to, the segments a track what it calibrates to (QIC-40/80 drives
+  that cannot: from the cartridge's length); the format code is 2 up to
+  6912 segments of QIC-40/80, 4 up to 65535 and 6 above and for
+  QIC-3010/3020. With VERIFY every segment is read after: sectors with
+  CRC errors go into the bad sector map, a segment with more than three
+  or not found as a whole. The tape runs at 1 Mbit/s where the cartridge (not QIC-40), the
   drive (SELECT RATE, and its configuration then says so) and the
   controller (an 82077 or later: VERSION 90h) all have it, otherwise at
   500 kbit/s; it drops back to 500 kbit/s if the header cannot be read.
@@ -190,7 +200,10 @@ which ends the cartridge there; it then reads all back, and
 written volumes' sizes, CRCs and parity. Every drive and format above
 writes. `WRITE=F` (QIC-80) has the header end the cartridge at segment
 170 and fills it: VOLUME OVERFLOW with EOM and the residue, at once again
-after the filemark.
+after the filemark. `WRITE=X` starts from a blank cartridge (an empty
+image) that QICREAD formats with FORMAT MEDIUM and then writes as `W`,
+`WRITE=V` with VERIFY; with `DITTO=1` `MEDIUM_X=` takes another 86Box
+medium for it.
 `tests/dos_86box_qicecc.sh` runs the tape's Reed-Solomon code
 (`src/qicecc.inc`) on its own in DOS: `QICECC.COM` (`tests/qicecc.asm`)
 mends the segments `tests/qictape.py --ecc-vectors` writes, with one to

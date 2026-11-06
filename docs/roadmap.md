@@ -45,11 +45,14 @@
    since 86Box's tapes have no CRC errors). Still to do: 2 Mbit/s
    (1 Mbit/s is selected where drive and controller have it).
 4. **Floppy tape, writing and formatting**: segments with ECC, bad sector
-   map, volume table, streaming. **Writing is done**: volumes at the end
-   of data or over a volume (the cartridge ending there), on every drive
-   and format of step 3, the volume table kept. Still to do: formatting
-   (FORMAT TRACK with the reference burst, the header segments and their
-   bad sector map) and verifying while writing.
+   map, volume table, streaming. **Done**: volumes written at the end of
+   data or over a volume (the cartridge ending there), on every drive and
+   format of step 3, the volume table kept; FORMAT MEDIUM of blank
+   cartridges (reference burst, every track, header, bad sector map from
+   VERIFY, empty volume table) on 86Box's Colorado 250 and Ditto with
+   QIC-80, QIC-3010, Ditto 2GB and Ditto Max cartridges. Not done: a
+   verify while writing, the Ditto 2GB's own scrambled header when
+   formatting (format code 6 instead, which it reads).
 5. **Optional**: the floppy drive as a SCSI disk; proprietary CD-ROM
    interfaces; further buses from [devices](devices.md#further-ideas-of-the-same-kind).
 

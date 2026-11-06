@@ -313,9 +313,11 @@ def listing(path, check=None):
                 mask = struct.unpack_from("<I", hdr, 2048 + 4 * seg)[0]
                 if mask:
                     bad[seg] = mask
-        img.seek(2 * SEGMENT)
+        vseg = struct.unpack_from("<I", hdr, 242)[0] if FMT == 6 else \
+            struct.unpack_from("<H", hdr, 10)[0]  # the volume table
+        img.seek(vseg * SEGMENT)
         raw = img.read(SEGMENT)
-        good = good_sectors(bad, 2)
+        good = good_sectors(bad, vseg)
         vt = b"".join(raw[s * SECTOR:(s + 1) * SECTOR] for s in good[:-3])
         for i in range(0, len(vt), 128):
             e = vt[i:i + 128]

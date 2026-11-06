@@ -82,6 +82,11 @@ QIC_STOP        equ     18
 QIC_VENDOR      equ     32
 QIC_SEL_RATE    equ     27              ; select rate, a parameter
 QIC_TAPE_STAT   equ     33              ; the cartridge: format, length
+QIC_FMT_MODE    equ     15              ; enter format mode
+QIC_REF_BURST   equ     16              ; write the reference burst
+QIC_PRIMARY     equ     30              ; enter primary mode
+QIC_CALIBRATE   equ     36              ; calibrate tape length
+QIC_FMT_SEGS    equ     37              ; report format segments
 
 ; drive status
 QS_READY        equ     01h
@@ -183,6 +188,8 @@ qic_exec:
         je      .read
         cmp     al, 0Ah                 ; WRITE (6)
         je      .write
+        cmp     al, 04h                 ; FORMAT MEDIUM
+        je      .format
         cmp     al, 10h                 ; WRITE FILEMARKS
         je      .wfm
         cmp     al, 11h                 ; SPACE
@@ -259,6 +266,11 @@ qic_exec:
         call    qt_load
         jc      .sense
         call    qt_write
+        jc      .sense
+        jmp     .good
+
+.format:
+        call    qt_format
         jc      .sense
         jmp     .good
 
@@ -444,6 +456,7 @@ qt_tries        db      0
 qt_rmask        dd      0
 qt_rdone        dd      0               ; sectors in the buffer (or erased)
 qt_wrmode       db      0               ; qt_read_seg writes the buffer
+qt_verify       db      0               ; qt_read_seg checks: no ECC
 qt_res          times 7 db 0            ; result bytes of a read or READ ID
 qt_idsec        db      0               ; READ ID: sector in the segment
 
@@ -639,6 +652,545 @@ qt_space:
         ret
 .bad:   mov     eax, SNS_BAD_FIELD
         stc
+        ret
+
+;-----------------------------------------------------------------------------
+; Formatting
+;
+; FORMAT MEDIUM lays the cartridge out anew: the reference burst if it has
+; none, then every track in turn wound to its start and formatted while it
+; streams, a FORMAT of the 765 for each run of segments in a floppy
+; cylinder (128 sectors, four segments), the IDs C/H/R/N from the buffer,
+; ended by the DMA count as ftape does (the tape has no index).  The grid
+; is the QIC-80 one, 600 segments a head and 4 a cylinder.  The tracks
+; are those the drive takes a head seek to; the segments a track what it
+; calibrates to (else what QIC-40/80 have for the length).  The format
+; code follows from the size: 2 (a sector mask a segment) up to 6912
+; segments of QIC-40/80, 4 (a list) up to 65535, else 6 and QIC-3010/3020
+; always.  VERIFY reads every segment after: the sectors that do not read
+; go into the bad sector map, a segment with more than three the whole of
+; it.  Then the header, twice, and an empty volume table.
+;-----------------------------------------------------------------------------
+
+QT_FMT_TRACKS   db      72, 50, 40, 36, 28, 20, 0
+qt_ftracks      db      0
+qt_fspt         dw      0
+qt_fstd         db      0
+qt_fgap         db      0
+qt_fseg         dd      0               ; the segment being formatted
+qt_fend         dd      0               ; the end of its track
+qt_fhdr         dd      0, 0, 0         ; header, its copy, volume table
+
+qt_format:
+        test    byte [qt_status], QS_WPROT
+        jz      .rw
+        mov     eax, SNS_WPROT
+        stc
+        ret
+.rw:    mov     byte [qt_loaded], 0     ; the old layout is gone
+        mov     byte [qt_wopen], 0
+        mov     dword [qt_bseg], 0FFFFFFFFh
+        mov     word [qt_nbad], 0
+        mov     byte [qt_verify], 0
+        call    qt_rewind
+        jc      .o
+        call    qt_pick_rate            ; the standard and the rate
+        mov     al, QIC_TAPE_STAT
+        mov     cl, 8
+        call    qt_report
+        jnc     .st
+        call    qt_clear
+        mov     al, 2                   ; QIC-80, if the drive cannot say
+.st:    mov     [qt_fstd], al
+        mov     al, QIC_FMT_MODE        ; the burst only in format mode
+        call    qt_command
+        jc      .hw
+        call    qt_ready_wait
+        jc      .o
+        call    qt_get_status           ; the reference burst, if none
+        test    al, QS_REFERENCED       ; (a head seek needs it)
+        jnz     .refd
+        mov     al, QIC_REF_BURST
+        call    qt_command
+        jc      .hw
+        mov     dword [qt_wait], 2 * QT_WIND_TICKS
+        call    qt_ready_wait
+        mov     dword [qt_wait], 0
+        jc      .o
+.refd:  call    qt_ftracks_probe
+        jc      .o
+        call    qt_fspt_find
+        jc      .o
+        mov     al, [qt_fstd]           ; QIC-3010/3020: the format too
+        and     al, 0Fh
+        cmp     al, 3
+        jb      .geo
+        shl     al, 2
+        inc     al
+        test    byte [qt_fstd], 80h     ; wide
+        jz      .sel
+        add     al, 2
+.sel:   push    ax
+        mov     al, QIC_SEL_RATE
+        call    qt_command
+        pop     ax
+        jc      .hw
+        add     al, 2
+        call    qt_command
+        jc      .hw
+        call    qt_ready_wait           ; not taken: the drive knows
+        jnc     .geo
+        call    qt_clear
+.geo:   mov     ax, [qt_fspt]           ; the layout to read and write by
+        mov     [qt_spt], ax
+        mov     byte [qt_spc], 4
+        mov     word [qt_sph], 600
+        mov     byte [qt_fgap], 233
+        test    byte [qt_fstd], 60h     ; flex lengths
+        jz      .gap
+        mov     byte [qt_fgap], 248
+.gap:   xor     bl, bl                  ; track
+.trk:   call    qt_ftrack
+        jc      .fail
+        inc     bl
+        cmp     bl, [qt_ftracks]
+        jb      .trk
+        mov     al, QIC_PRIMARY
+        call    qt_command
+        jc      .hw
+        call    qt_ready_wait
+        jc      .o
+        movzx   eax, byte [qt_ftracks]  ; the last segment
+        movzx   ecx, word [qt_fspt]
+        mul     ecx
+        dec     eax
+        mov     [qt_last], eax
+        mov     al, 6                   ; the format code
+        mov     cl, [qt_fstd]
+        and     cl, 0Fh
+        cmp     cl, 3
+        jae     .code
+        cmp     dword [qt_last], 65535
+        jae     .code
+        mov     al, 4
+        cmp     dword [qt_last], 6912
+        jae     .code
+        mov     al, 2
+.code:  mov     [qt_fmt], al
+        test    byte [cdb_buf+1], 2     ; VERIFY
+        jz      .hdr
+        call    qt_fverify
+        jc      .o
+.hdr:   call    qt_fheader
+        jc      .o
+        call    qt_rewind
+        jmp     .o
+.fail:  call    qt_stop
+        mov     al, QIC_PRIMARY
+        call    qt_command
+        mov     eax, SNS_QT_WRITE
+        stc
+        ret
+.hw:    mov     eax, SNS_QT_HW
+        stc
+.o:     ret
+
+; the error a refused command left, cleared
+qt_clear:
+        call    qt_get_status
+        test    al, QS_ERROR
+        jz      .o
+        call    qt_get_error
+.o:     ret
+
+; the tracks: the highest the head seeks to, of those cartridges have
+qt_ftracks_probe:
+        mov     si, QT_FMT_TRACKS
+.l:     mov     al, [si]
+        or      al, al
+        jz      .none
+        mov     al, QIC_TRACK
+        call    qt_command
+        jc      .hw
+        mov     al, [si]
+        inc     al                      ; track n - 1, a parameter
+        call    qt_command
+        jc      .hw
+        call    qt_ready_wait
+        jnc     .found
+        call    qt_clear
+        inc     si
+        jmp     .l
+.found: mov     al, [si]
+        mov     [qt_ftracks], al
+        mov     byte [qt_track], 0FFh
+        clc
+        ret
+.none:  mov     eax, SNS_QT_FORMAT
+        stc
+        ret
+.hw:    mov     eax, SNS_QT_HW
+        stc
+        ret
+
+; the segments a track: calibrated, or from the QIC-40/80 length
+qt_fspt_find:
+        mov     al, QIC_CALIBRATE
+        call    qt_command
+        jc      .table
+        mov     dword [qt_wait], 2 * QT_WIND_TICKS
+        call    qt_ready_wait
+        mov     dword [qt_wait], 0
+        jc      .table
+        mov     al, QIC_FMT_SEGS
+        mov     cl, 16
+        call    qt_report
+        jc      .table
+        or      ax, ax
+        jz      .table
+        mov     [qt_fspt], ax
+        clc
+        ret
+.table: call    qt_clear
+        mov     al, [qt_fstd]           ; 205 or 307.5 ft
+        mov     ah, al
+        and     ah, 70h
+        and     al, 0Fh
+        mov     bx, 68
+        cmp     al, 1
+        je      .q40
+        mov     bx, 100
+        cmp     al, 2
+        jne     .none
+        cmp     ah, 10h
+        je      .t
+        cmp     ah, 20h
+        jne     .none
+        mov     bx, 150
+        jmp     .t
+.q40:   cmp     ah, 10h
+        je      .t
+        mov     bx, 102
+        cmp     ah, 20h
+        jne     .none
+.t:     mov     [qt_fspt], bx
+        clc
+        ret
+.none:  mov     eax, SNS_QT_FORMAT
+        stc
+        ret
+
+; format track BL.  CF on failure.
+qt_ftrack:
+        push    bx
+        mov     [qt_ttrack], bl
+        mov     al, QIC_TRACK
+        call    qt_command
+        jc      .f
+        mov     al, [qt_ttrack]
+        add     al, 2
+        call    qt_command
+        jc      .f
+        call    qt_ready_wait
+        jc      .f
+        mov     al, [qt_ttrack]
+        mov     [qt_track], al
+        mov     al, QIC_PHYS_REV        ; to where the track begins
+        test    byte [qt_track], 1
+        jz      .wind
+        mov     al, QIC_PHYS_FWD
+.wind:  call    qt_command
+        jc      .f
+        mov     dword [qt_wait], QT_WIND_TICKS
+        call    qt_ready_wait
+        mov     dword [qt_wait], 0
+        jc      .f
+        movzx   eax, byte [qt_ttrack]
+        movzx   ecx, word [qt_fspt]
+        mul     ecx
+        mov     [qt_fseg], eax
+        add     eax, ecx
+        mov     [qt_fend], eax
+        call    qt_forward
+        jc      .f
+.run:   mov     eax, [qt_fseg]          ; segments to the cylinder's end
+        mov     ecx, eax
+        and     ecx, 3
+        neg     ecx
+        add     ecx, 4
+        mov     edx, [qt_fend]
+        sub     edx, eax
+        cmp     ecx, edx
+        jbe     .n
+        mov     ecx, edx
+.n:     call    qt_fids                 ; CX segments
+        jc      .f
+        movzx   ecx, cx
+        add     [qt_fseg], ecx
+        mov     eax, [qt_fseg]
+        cmp     eax, [qt_fend]
+        jb      .run
+        call    qt_stop                 ; it stops at the track's end
+        clc
+.f:     pop     bx
+        ret
+
+; format CX segments from [qt_fseg], streaming.  CF on failure.
+qt_fids:
+        push    cx
+        push    di
+        mov     di, [qt_buf]            ; the IDs
+        mov     eax, [qt_fseg]
+        push    cx
+.seg:   push    eax
+        xor     edx, edx
+        movzx   ebx, word [qt_sph]
+        div     ebx                     ; EAX = head, EDX = in it
+        mov     bh, al
+        mov     ax, dx
+        div     byte [qt_spc]           ; AL = cylinder, AH = segment in it
+        mov     bl, al
+        mov     al, ah
+        shl     al, 5
+        inc     al                      ; the first sector
+        mov     ah, 32
+.id:    mov     [di], bl                ; C
+        mov     [di+1], bh              ; H
+        mov     [di+2], al              ; R
+        mov     byte [di+3], 3          ; N
+        add     di, 4
+        inc     al
+        dec     ah
+        jnz     .id
+        pop     eax
+        inc     eax
+        loop    .seg
+        pop     cx
+        mov     di, [qt_buf]
+        shl     cx, 7                   ; 128 bytes a segment
+        push    cx
+        mov     byte [qt_wrmode], 1     ; the DMA reads memory
+        call    qt_dma
+        mov     byte [qt_wrmode], 0
+        cmp     byte [qt_bp], 0
+        je      .go
+        call    qt_podput
+.go:    call    qt_select
+        call    qt_int_clear
+        pop     cx
+        mov     al, 4Dh                 ; FORMAT TRACK, MFM
+        call    qt_out
+        jc      .f
+        mov     al, [qt_unit]
+        call    qt_out
+        jc      .f
+        mov     al, 3                   ; 1024 bytes
+        call    qt_out
+        jc      .f
+        mov     ax, cx
+        shr     ax, 2                   ; the sectors
+        call    qt_out
+        jc      .f
+        mov     al, [qt_fgap]
+        call    qt_out
+        jc      .f
+        mov     al, 6Bh                 ; the filler
+        call    qt_out
+        jc      .f
+        call    qt_result
+        jmp     .o
+.f:     stc
+.o:     pop     di
+        pop     cx
+        ret
+
+; VERIFY: every segment read, what does not read into the bad sector map
+qt_fverify:
+        mov     byte [qt_verify], 1
+        xor     edx, edx
+.l:     push    edx
+        mov     eax, edx
+        call    qt_read_seg
+        pop     edx
+        jc      .all
+        movzx   cx, byte [qt_nera]      ; the erasures, sector numbers
+        jcxz    .n
+        xor     eax, eax                ; (no bad sectors before them yet)
+        xor     si, si
+.e:     movzx   ebx, byte [qt_era+si]
+        bts     eax, ebx
+        inc     si
+        loop    .e
+        call    qt_bad_add
+        jmp     .n
+.all:   mov     eax, 0FFFFFFFFh
+        call    qt_bad_add
+.n:     inc     edx
+        cmp     edx, [qt_last]
+        jbe     .l
+        mov     byte [qt_verify], 0
+        call    qt_stop
+        clc
+        ret
+
+; the header into the first two good segments, the volume table, empty,
+; into the next with room.  CF and EAX = the sense.
+qt_fheader:
+        xor     eax, eax
+        xor     si, si
+.find:  push    eax
+        call    qt_badmask
+        mov     ecx, eax
+        pop     eax
+        cmp     si, 8
+        jae     .vt
+        or      ecx, ecx                ; a header: no bad sector at all
+        jnz     .next
+        jmp     .take
+.vt:    push    eax
+        call    qt_capacity
+        or      ax, ax
+        pop     eax
+        jz      .next
+.take:  mov     [qt_fhdr+si], eax
+        add     si, 4
+        cmp     si, 12
+        jae     .found
+.next:  inc     eax
+        cmp     eax, 16
+        jb      .find
+        mov     eax, SNS_QT_FORMAT
+        stc
+        ret
+.found: push    cs                      ; the header
+        pop     es
+        mov     di, [qt_buf]
+        mov     cx, 29 * 1024 / 2
+        xor     ax, ax
+        rep     stosw
+        mov     si, [qt_buf]
+        mov     dword [si], 0AA55AA55h
+        mov     al, [qt_fmt]
+        mov     [si+4], al
+        mov     eax, [qt_fhdr]
+        mov     [si+6], ax
+        mov     eax, [qt_fhdr+4]
+        mov     [si+8], ax
+        mov     eax, [qt_fhdr+8]
+        mov     [si+10], ax
+        mov     eax, [qt_last]
+        mov     [si+12], ax
+        cmp     byte [qt_fmt], 6
+        jne     .g
+        mov     dword [si+6], 0
+        mov     dword [si+10], 0
+        mov     eax, [qt_fhdr]
+        mov     [si+234], eax
+        mov     eax, [qt_fhdr+4]
+        mov     [si+238], eax
+        mov     eax, [qt_fhdr+8]
+        mov     [si+242], eax
+        mov     eax, [qt_last]
+        mov     [si+246], eax
+.g:     mov     ax, [qt_fspt]
+        mov     [si+24], ax
+        mov     al, [qt_ftracks]
+        mov     [si+26], al
+        mov     eax, [qt_last]
+        xor     edx, edx
+        mov     ecx, 600
+        div     ecx
+        mov     [si+27], al             ; max floppy side
+        mov     byte [si+28], 149       ; max floppy track
+        mov     byte [si+29], 128       ; max floppy sector
+        push    si
+        lea     di, [si+30]
+        mov     si, qt_flabel
+        mov     cx, 44
+        rep     movsb
+        pop     si
+        call    qt_stamp
+        mov     [si+74], eax            ; when it was formatted
+        call    qt_fbadmap
+        mov     eax, [qt_fhdr]
+        call    qt_fput
+        jc      .o
+        mov     eax, [qt_fhdr+4]
+        call    qt_fput
+        jc      .o
+        push    cs                      ; the volume table: nothing in it
+        pop     es
+        mov     di, [qt_buf]
+        mov     cx, 29 * 1024 / 2
+        xor     ax, ax
+        rep     stosw
+        mov     eax, [qt_fhdr+8]
+        call    qt_fput
+.o:     ret
+
+qt_flabel       db      'PORTASPI formatted                          '
+
+; the bad sector map of the list into the header in the buffer
+qt_fbadmap:
+        mov     cx, [qt_nbad]
+        or      cx, cx
+        jnz     .go
+        ret
+.go:    xor     bx, bx
+        mov     di, [qt_buf]
+        add     di, 256                 ; formats 4 and 6: a list at 256
+.e:     mov     edx, [qt_badlist+bx]
+        mov     eax, [qt_badlist+bx+4]
+        cmp     byte [qt_fmt], 2
+        jne     .list
+        push    di
+        mov     di, dx                  ; format 2: a mask at 2048 + 4 seg
+        shl     di, 2
+        add     di, [qt_buf]
+        mov     [di+2048], eax
+        pop     di
+        jmp     .n
+.list:  cmp     eax, 0FFFFFFFFh
+        jne     .secs
+        mov     eax, edx                ; the whole segment
+        shl     eax, 5
+        inc     eax
+        or      eax, 800000h
+        mov     [di], eax
+        add     di, 3
+        jmp     .n
+.secs:  push    ecx
+        push    esi
+        xor     esi, esi                ; the sector
+.s:     bt      eax, esi
+        jnc     .sn
+        mov     ecx, edx
+        shl     ecx, 5
+        add     ecx, esi
+        inc     ecx
+        mov     [di], ecx
+        add     di, 3
+.sn:    inc     esi
+        cmp     esi, 32
+        jb      .s
+        pop     esi
+        pop     ecx
+.n:     add     bx, 8
+        dec     cx
+        jnz     .e
+        mov     byte [di], 0            ; the list's end
+        mov     word [di+1], 0
+        ret
+
+; the buffer to segment EAX, its parity added.  CF and EAX = the sense.
+qt_fput:
+        push    eax
+        call    qt_capacity
+        mov     [qt_bcap], ax
+        pop     eax
+        mov     byte [qt_wrmode], 1
+        call    qt_read_seg
+        mov     byte [qt_wrmode], 0
         ret
 
 ;-----------------------------------------------------------------------------
@@ -1425,6 +1977,8 @@ qt_read_seg:
 .read_ok:
         cmp     byte [qt_wrmode], 0
         jne     .streams
+        cmp     byte [qt_verify], 0
+        jne     .streams
         call    qt_ecc                  ; a damaged sector is put right
         jc      .rderr
 .streams:
@@ -1837,23 +2391,32 @@ qt_podfill:
         je      .o
         pushad
         push    es
+        movzx   cx, bh
+        shl     cx, 10
+        call    qt_podput
+        pop     es
+        popad
+.o:     ret
+
+; CX bytes from CS:DI into the Ditto's buffer, at the same offset
+qt_podput:
+        pushad
+        push    es
         mov     dx, [lpt_base]
         mov     ax, di
         sub     ax, [qt_buf]
         movzx   eax, ax
-        push    bx
+        push    cx
         mov     bl, BP_REG_MEMADDR
         call    fd_set3
-        pop     bx
-        movzx   cx, bh
-        shl     cx, 10
+        pop     cx
         push    cs
         pop     es
         mov     al, BP_REG_MEMORY
         call    bk_sput
         pop     es
         popad
-.o:     ret
+        ret
 
 ; the Ditto: BH sectors from its buffer to CS:DI, at the same offset
 qt_podcopy:

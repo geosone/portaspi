@@ -16,7 +16,8 @@
 ; volume (seed 1234h, blocks of 32768) at the end of data until the
 ; cartridge is full: VOLUME OVERFLOW with EOM, "FULL bytes" (the residue
 ; taken off), then the filemark, and a further WRITE must fail the same
-; way with all of it as the residue ("FULL 0").
+; way with all of it as the residue ("FULL 0").  QICREAD X first formats
+; the cartridge (FORMAT MEDIUM), QICREAD V with VERIFY, then goes on as W.
 ; Test tool of tests/dos_86box_qic.sh.  nasm -f bin -o QICREAD.COM
 ; License: GNU General Public License version 2 only.
 
@@ -92,6 +93,10 @@ found:  mov     cx, 5                   ; TEST UNIT READY: the UNIT ATTENTION
         je      .wr
         cmp     al, 'F'
         je      .wr
+        cmp     al, 'X'
+        je      .fmt
+        cmp     al, 'V'
+        je      .fmt
         cmp     al, 'T'
         jne     .rd
         mov     eax, 1                  ; T: past the first filemark
@@ -102,6 +107,18 @@ found:  mov     cx, 5                   ; TEST UNIT READY: the UNIT ATTENTION
         mov     dx, WCHUNK0
         call    write_vol
         jmp     .rew
+.fmt:   push    ax
+        call    srb_clear               ; FORMAT MEDIUM
+        pop     ax
+        mov     byte [cdb], 04h
+        cmp     al, 'V'
+        jne     .fx
+        mov     byte [cdb+1], 2         ; VERIFY
+.fx:    mov     byte [srb+3], 18h
+        call    exec6
+        call    check_good
+        mov     dx, msg_formatted
+        call    puts
 .wr:    call    srb_clear               ; W: SPACE to the end of data
         mov     byte [cdb], 11h
         mov     byte [cdb+1], 3
@@ -571,6 +588,7 @@ msg_ud          db      'QICREAD: invalid opcode at $'
 msg_done        db      'QICREAD DONE', 13, 10, '$'
 msg_wrote       db      'WROTE', 13, 10, '$'
 msg_full        db      'FULL $'
+msg_formatted   db      'FORMATTED', 13, 10, '$'
 msg_crlf        db      13, 10, '$'
 
 aspi            dd      0

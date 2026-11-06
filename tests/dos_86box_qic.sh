@@ -29,7 +29,10 @@
 # volume table, sizes, CRCs and the parity of what was written.  WRITE=F
 # (QIC-80 only): the header says the cartridge ends at segment 170, and
 # QICREAD fills it with one volume past the third: VOLUME OVERFLOW, EOM
-# and the residue, at the filemark and once more.
+# and the residue, at the filemark and once more.  WRITE=X: a blank
+# cartridge (an empty image), which QICREAD formats (FORMAT MEDIUM) and
+# then writes as W; WRITE=V the same with VERIFY.  MEDIUM= another 86Box
+# medium for it (DITTO=1).
 # Needs 86Box master of 2026-11-05 or later (86Box/86Box#8748: before it
 # the emulator crashed when the tape started to stream).
 set -euo pipefail
@@ -73,7 +76,11 @@ fi
 cp "$OPENASPI/build/dos-cda/boot.img" "$OUT/"
 nasm -f bin -o "$OUT/QICREAD.COM" "$ROOT/tests/qicread.asm"
 rm -f "$OUT/tape.img" "$OUT/expect.txt"
-if [ -n "$TAPE" ]; then
+if [ "${WRITE:-}" = X ] || [ "${WRITE:-}" = V ]; then
+    : > "$OUT/tape.img"                 # blank
+    MEDIUM=${MEDIUM_X:-$MEDIUM}
+    VOLS=()
+elif [ -n "$TAPE" ]; then
     cp --sparse=always "$TAPE" "$OUT/tape.img"
     VOLS=()
 else
@@ -97,7 +104,7 @@ else
     fi
 fi
 WRITE=${WRITE:-}
-case $WRITE in ''|W|T|F) ;; *) echo "WRITE: W, T or F" >&2; exit 1 ;; esac
+case $WRITE in ''|W|T|F|X|V) ;; *) echo "WRITE: W, T, F, X or V" >&2; exit 1 ;; esac
 if [ "$WRITE" = F ] && [ "$FORMAT" != qic80 ]; then
     echo "WRITE=F needs FORMAT=qic80" >&2
     exit 1
@@ -115,7 +122,7 @@ def gen(seed, size):
 first = len(vols)
 if write == "T":
     vols, first = vols[:1] + [gen(0x1234, 70000)], 1
-elif write == "W":
+elif write in ("W", "X", "V"):
     vols += [gen(0x1234, 70000), gen(0x1235, 300000)]
 elif write == "F":                      # segments 163 to 170, none bad
     full = 8 * 29 * 1024
