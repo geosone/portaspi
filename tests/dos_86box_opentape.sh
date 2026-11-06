@@ -72,7 +72,7 @@ cat > "$OUT/AUTOEXEC.BAT" <<'BAT'
 @ECHO OFF
 CTTY AUX
 ECHO OPENTAPE START > AUX
-REM Enhanced DR-DOS 20250427 overwrites the first program's command
+REM SvarCOM 2025.1 (SvarDOS/bugz#178) overwrites the first program's command
 REM tail after the boot from its 64th byte on (seen with a bare OpenWatcom
 REM argv dump, no drivers loaded): a short run first
 OPENTAPE --help > NUL
