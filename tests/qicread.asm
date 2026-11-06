@@ -8,6 +8,15 @@
 ;   SPACED size crc
 ; Reads are READ (6) of variable blocks of CHUNK bytes; a filemark comes
 ; as CHECK CONDITION with FILEMARK and the residue in the information.
+; QICREAD W first writes two volumes at the end of data, QICREAD T one
+; after the first filemark (the cartridge ends there), each with WRITE (6)
+; of variable blocks and a filemark: WSIZE0 and WSIZE1 bytes of x = x *
+; 1103515245 + 12345 (32 bits, from the seed 1234h + its number among
+; them), byte x >> 16 each; then reads as above.  QICREAD F writes one
+; volume (seed 1234h, blocks of 32768) at the end of data until the
+; cartridge is full: VOLUME OVERFLOW with EOM, "FULL bytes" (the residue
+; taken off), then the filemark, and a further WRITE must fail the same
+; way with all of it as the residue ("FULL 0").
 ; Test tool of tests/dos_86box_qic.sh.  nasm -f bin -o QICREAD.COM
 ; License: GNU General Public License version 2 only.
 
@@ -16,6 +25,10 @@
         org     100h
 
 CHUNK   equ     12000                   ; not a multiple of the sector size
+WSIZE0  equ     70000
+WSIZE1  equ     300000
+WCHUNK0 equ     10000
+WCHUNK1 equ     32768
 
 start:  cld
         xor     ax, ax                  ; an invalid opcode: say where
@@ -73,7 +86,48 @@ found:  mov     cx, 5                   ; TEST UNIT READY: the UNIT ATTENTION
 .rdy:   mov     al, 01h                 ; REWIND
         call    cmd6
         call    check_good
-
+        mov     al, [80h+2]             ; the command line: " W" or " T"
+        and     al, 0DFh
+        cmp     al, 'W'
+        je      .wr
+        cmp     al, 'F'
+        je      .wr
+        cmp     al, 'T'
+        jne     .rd
+        mov     eax, 1                  ; T: past the first filemark
+        call    space
+        call    check_good
+        mov     dword [wseed], 1234h
+        mov     ebx, WSIZE0
+        mov     dx, WCHUNK0
+        call    write_vol
+        jmp     .rew
+.wr:    call    srb_clear               ; W: SPACE to the end of data
+        mov     byte [cdb], 11h
+        mov     byte [cdb+1], 3
+        mov     byte [srb+3], 18h
+        call    exec6
+        call    check_good
+        mov     al, [80h+2]
+        and     al, 0DFh
+        cmp     al, 'F'
+        jne     .w2
+        call    write_full
+        jmp     .rew
+.w2:    mov     dword [wseed], 1234h
+        mov     ebx, WSIZE0
+        mov     dx, WCHUNK0
+        call    write_vol
+        mov     dword [wseed], 1235h
+        mov     ebx, WSIZE1
+        mov     dx, WCHUNK1
+        call    write_vol
+.rew:   mov     dx, msg_wrote
+        call    puts
+        mov     al, 01h                 ; REWIND
+        call    cmd6
+        call    check_good
+.rd:
         mov     byte [vol], 0
 .vol:   call    read_file
         jc      .eod
@@ -155,6 +209,134 @@ no_aspi:
 fail:   call    puts
         mov     ax, 4C01h
         int     21h
+
+; F: write to the end of the cartridge
+write_full:
+        mov     dword [wseed], 1234h
+        mov     dword [wtotal], 0
+.l:     mov     ecx, WCHUNK1
+        call    write_block
+        cmp     byte [srb+1], 1
+        jne     .end
+        add     dword [wtotal], WCHUNK1
+        jmp     .l
+.end:   call    full_check
+        mov     eax, WCHUNK1            ; what of the last block went
+        sub     eax, [info]
+        add     [wtotal], eax
+        call    full_out
+        call    srb_clear               ; WRITE FILEMARKS 1
+        mov     byte [srb+3], 18h
+        mov     byte [cdb], 10h
+        mov     byte [cdb+4], 1
+        call    exec6
+        call    check_good
+        mov     ecx, WCHUNK1            ; and nothing more goes
+        call    write_block
+        call    full_check
+        mov     eax, WCHUNK1
+        sub     eax, [info]
+        mov     [wtotal], eax
+        jmp     full_out
+
+; the last command must have ended in VOLUME OVERFLOW with EOM: the
+; residue -> [info]
+full_check:
+        cmp     byte [srb+1], 4
+        jne     .bad
+        mov     al, [sense+2]
+        and     al, 4Fh
+        cmp     al, 4Dh
+        jne     .bad
+        test    byte [sense], 80h
+        jz      .bad
+        mov     eax, [sense+3]
+        bswap   eax
+        mov     [info], eax
+        ret
+.bad:   call    sense_out
+        mov     ax, 4C01h
+        int     21h
+
+full_out:
+        mov     dx, msg_full
+        call    puts
+        mov     eax, [wtotal]
+        call    putdec
+        jmp     crlf
+
+; one WRITE (6) of ECX bytes from [wseed]
+write_block:
+        push    ecx
+        mov     di, buf
+        mov     eax, [wseed]
+.g:     imul    eax, eax, 1103515245
+        add     eax, 12345
+        push    eax
+        shr     eax, 16
+        mov     [di], al
+        pop     eax
+        inc     di
+        dec     ecx
+        jnz     .g
+        mov     [wseed], eax
+        call    srb_clear
+        pop     ecx
+        mov     byte [srb+3], 10h       ; out
+        mov     [srb+0Ah], ecx
+        mov     word [srb+0Fh], buf
+        mov     [srb+11h], ds
+        mov     byte [cdb], 0Ah
+        mov     [cdb+4], cl
+        mov     [cdb+3], ch
+        jmp     exec6
+
+; write a volume: EBX bytes from [wseed] in WRITE (6) of DX bytes, then a
+; filemark
+write_vol:
+        mov     [wchunk], dx
+.l:     or      ebx, ebx
+        jz      .fm
+        movzx   ecx, word [wchunk]
+        cmp     ecx, ebx
+        jbe     .n
+        mov     ecx, ebx
+.n:     sub     ebx, ecx
+        push    ebx
+        push    ecx
+        mov     di, buf                 ; the bytes
+        mov     eax, [wseed]
+.g:     imul    eax, eax, 1103515245
+        add     eax, 12345
+        push    eax
+        shr     eax, 16
+        mov     [di], al
+        pop     eax
+        inc     di
+        dec     ecx
+        jnz     .g
+        mov     [wseed], eax
+        pop     ecx
+        push    ecx
+        call    srb_clear
+        pop     ecx
+        mov     byte [srb+3], 10h       ; out
+        mov     [srb+0Ah], ecx
+        mov     word [srb+0Fh], buf
+        mov     [srb+11h], ds
+        mov     byte [cdb], 0Ah
+        mov     [cdb+4], cl
+        mov     [cdb+3], ch
+        call    exec6
+        call    check_good
+        pop     ebx
+        jmp     .l
+.fm:    call    srb_clear               ; WRITE FILEMARKS 1
+        mov     byte [srb+3], 18h
+        mov     byte [cdb], 10h
+        mov     byte [cdb+4], 1
+        call    exec6
+        jmp     check_good
 
 ; read a file to its filemark: size and crc.  CF at the end of data.
 read_file:
@@ -387,6 +569,8 @@ msg_spaced      db      'SPACED$'
 msg_err         db      'ERR$'
 msg_ud          db      'QICREAD: invalid opcode at $'
 msg_done        db      'QICREAD DONE', 13, 10, '$'
+msg_wrote       db      'WROTE', 13, 10, '$'
+msg_full        db      'FULL $'
 msg_crlf        db      13, 10, '$'
 
 aspi            dd      0
@@ -396,6 +580,10 @@ vol             db      0
 size            dd      0
 crc             dd      0
 got             dd      0
+wseed           dd      0
+wchunk          dw      0
+wtotal          dd      0
+info            dd      0
 
 srb             times 40h db 0
 cdb             times 6 db 0

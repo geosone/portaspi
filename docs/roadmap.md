@@ -45,7 +45,11 @@
    since 86Box's tapes have no CRC errors). Still to do: 2 Mbit/s
    (1 Mbit/s is selected where drive and controller have it).
 4. **Floppy tape, writing and formatting**: segments with ECC, bad sector
-   map, volume table, streaming.
+   map, volume table, streaming. **Writing is done**: volumes at the end
+   of data or over a volume (the cartridge ending there), on every drive
+   and format of step 3, the volume table kept. Still to do: formatting
+   (FORMAT TRACK with the reference burst, the header segments and their
+   bad sector map) and verifying while writing.
 5. **Optional**: the floppy drive as a SCSI disk; proprietary CD-ROM
    interfaces; further buses from [devices](devices.md#further-ideas-of-the-same-kind).
 

@@ -1,6 +1,6 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
-**Status: ZIP drives, LS-120, BackPack CD-ROM and floppy drive, OnSpec, EPAT, EPIA, BackPack and Freecom; floppy tape reading.**
+**Status: ZIP drives, LS-120, BackPack CD-ROM and floppy drive, OnSpec, EPAT, EPIA, BackPack and Freecom; floppy tape reading and writing (formatted cartridges).**
 `PORTASPI.SYS` 0.5
 drives Iomega's parallel port ZIP drives in nibble, PS/2 and EPP mode: the
 ZIP 100 (PPA chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives
@@ -21,9 +21,10 @@ go a track at a time through the pod's buffer. The first BackPack CD-ROMs
 and PS/2 mode), become a SCSI CD-ROM drive: READ (10) a sector at a time,
 READ CAPACITY and READ TOC from the drive's disc information (the first
 track and the lead-out only). With `/F` a QIC-117 floppy tape drive on the
-floppy controller becomes a SCSI tape drive for reading: each volume of a
+floppy controller becomes a SCSI tape drive: each volume of a
 QIC-80 cartridge (the volume table of QIC-80/QIC-113) is a tape file,
-read with READ (6) of variable blocks, with filemarks between them;
+read with READ (6) and written with WRITE (6) of variable blocks, with
+filemarks between them;
 QIC-3010 and QIC-3020 cartridges too (format code 6), and the Ditto's
 own of 2 GB (format code 4, its scrambled header) to 7 GB (over 65535
 segments). The
@@ -82,8 +83,14 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   errors, erasures): the read goes on past them while the tape streams,
   and a retry only fetches what is still missing.
   REWIND, SPACE over filemarks and to the end of data, READ BLOCK LIMITS,
-  MODE SENSE and LOAD/UNLOAD are there; writing and formatting are not
-  yet. The tape runs at 1 Mbit/s where the cartridge (not QIC-40), the
+  MODE SENSE and LOAD/UNLOAD are there. WRITE (6) writes a new volume at
+  the end of data, or at the start of a volume, where the cartridge then
+  ends (the volumes from there on are dropped, as on any tape written
+  from a point); the segments get their parity, bad sectors are skipped,
+  and any filemark (WRITE FILEMARKS), REWIND, SPACE or READ ends the
+  volume and puts it into the volume table (QIC-113 entries in format
+  code 6), dated from the BIOS clock. A full cartridge is VOLUME
+  OVERFLOW with EOM and the residue. Formatting is not done yet. The tape runs at 1 Mbit/s where the cartridge (not QIC-40), the
   drive (SELECT RATE, and its configuration then says so) and the
   controller (an 82077 or later: VERSION 90h) all have it, otherwise at
   500 kbit/s; it drops back to 500 kbit/s if the header cannot be read.
@@ -175,11 +182,21 @@ track 1. `FORMAT=ditto2gb` is the Ditto 2GB with its own cartridge (format
 code 4, the header scrambled as the Ditto writes it), `ditto5gb` and
 `dittomax7` the Ditto Max with cartridges of over 65535 segments, the
 third volume past segment 65535.
+`WRITE=W` makes `QICREAD` first write two volumes at the end of data
+(70000 bytes in blocks of 10000 and 300000 in blocks of 32768, from a
+generator the host knows too), `WRITE=T` one after the first volume,
+which ends the cartridge there; it then reads all back, and
+`tests/qictape.py --check` looks at the image: the volume table, and the
+written volumes' sizes, CRCs and parity. Every drive and format above
+writes. `WRITE=F` (QIC-80) has the header end the cartridge at segment
+170 and fills it: VOLUME OVERFLOW with EOM and the residue, at once again
+after the filemark.
 `tests/dos_86box_qicecc.sh` runs the tape's Reed-Solomon code
 (`src/qicecc.inc`) on its own in DOS: `QICECC.COM` (`tests/qicecc.asm`)
 mends the segments `tests/qictape.py --ecc-vectors` writes, with one to
 three erasures (also in the parity sectors and in short segments), a
-damaged sector, and damage beyond the parity, which it must find.
+damaged sector, and damage beyond the parity, which it must find, and
+computes the parity of segments to write.
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.

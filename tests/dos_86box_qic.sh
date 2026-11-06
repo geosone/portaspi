@@ -22,6 +22,14 @@
 # FORMAT=ditto5gb or dittomax7 (with DITTO=1): the Ditto Max with a
 # cartridge of over 65535 segments, the third volume past segment 65535,
 # again across the end of a track.
+# WRITE=W: QICREAD first writes two volumes at the end of data (70000
+# bytes in blocks of 10000, 300000 in blocks of 32768, from a generator
+# both sides know), WRITE=T one after the first volume, the cartridge
+# ending there; then reads all back, and the host checks the image: the
+# volume table, sizes, CRCs and the parity of what was written.  WRITE=F
+# (QIC-80 only): the header says the cartridge ends at segment 170, and
+# QICREAD fills it with one volume past the third: VOLUME OVERFLOW, EOM
+# and the residue, at the filemark and once more.
 # Needs 86Box master of 2026-11-05 or later (86Box/86Box#8748: before it
 # the emulator crashed when the tape started to stream).
 set -euo pipefail
@@ -74,7 +82,9 @@ else
     head -c 4600000 /dev/urandom > "$OUT/vol2.bin"
     VOLS=("$OUT/vol0.bin" "$OUT/vol1.bin" "$OUT/vol2.bin")
     if [ "$FORMAT" = qic80 ]; then
-        python3 -I "$ROOT/tests/qictape.py" "$OUT/tape.img" --bad 4:5 \
+        END=()
+        [ "${WRITE:-}" != F ] || END=(--end 170)
+        python3 -I "$ROOT/tests/qictape.py" "$OUT/tape.img" "${END[@]}" --bad 4:5 \
             --damage 3:10 --damage 4:30 --damage 20:0 --damage 151:31 \
             "${VOLS[@]}"
     else
@@ -86,18 +96,46 @@ else
             --damage $((L + 9)):31 "${VOLS[@]}"
     fi
 fi
-python3 -I - "${VOLS[@]}" > "$OUT/expect.txt" <<'PY'
+WRITE=${WRITE:-}
+case $WRITE in ''|W|T|F) ;; *) echo "WRITE: W, T or F" >&2; exit 1 ;; esac
+if [ "$WRITE" = F ] && [ "$FORMAT" != qic80 ]; then
+    echo "WRITE=F needs FORMAT=qic80" >&2
+    exit 1
+fi
+python3 -I - "$OUT" "$WRITE" "${VOLS[@]}" > "$OUT/expect.txt" <<'PY'
 import sys, zlib
-names = sys.argv[1:]
-for i, n in enumerate(names):
-    d = open(n, "rb").read()
+out, write, names = sys.argv[1], sys.argv[2], sys.argv[3:]
+vols = [open(n, "rb").read() for n in names]
+def gen(seed, size):
+    b = bytearray(size)
+    for i in range(size):
+        seed = (seed * 1103515245 + 12345) & 0xFFFFFFFF
+        b[i] = (seed >> 16) & 0xFF
+    return bytes(b)
+first = len(vols)
+if write == "T":
+    vols, first = vols[:1] + [gen(0x1234, 70000)], 1
+elif write == "W":
+    vols += [gen(0x1234, 70000), gen(0x1235, 300000)]
+elif write == "F":                      # segments 163 to 170, none bad
+    full = 8 * 29 * 1024
+    vols += [gen(0x1234, full)]
+    print("FULL %d\nFULL 0" % full)
+for i, d in enumerate(vols):
     print("VOL %d %d %08X" % (i, len(d), zlib.crc32(d)))
-print("EOD %d" % len(names))
-if names:
+print("EOD %d" % len(vols))
+if vols:
     print("BACK ok")
-if len(names) > 1:
-    d = open(names[1], "rb").read()
-    print("SPACED %d %08X" % (len(d), zlib.crc32(d)))
+if len(vols) > 1:
+    print("SPACED %d %08X" % (len(vols[1]), zlib.crc32(vols[1])))
+with open(out + "/expect-img.txt", "w") as f:
+    for i, d in enumerate(vols):
+        if i < first:
+            f.write("TBL %d %d\n" % (i, len(d)))
+        else:
+            f.write("IMG %d %d %08X\nPARITY %d 0\n" % (i, len(d),
+                                                       zlib.crc32(d), i))
+print(first, file=open(out + "/first.txt", "w"))
 PY
 sed -e '/^cdrom_01_/d' -e "s/^fdd_02_type = none$/fdd_02_type = ${FDD2:-none}/" \
     "$OPENASPI/tests/fixtures/86box-upc.cfg" > "$OUT/86box.cfg"
@@ -128,7 +166,7 @@ printf 'DEVICE=PORTASPI.SYS /V %s %s\r\nSHELL=COMMAND.COM /P\r\n' "$TAPEOPT" \
 cat > "$OUT/AUTOEXEC.BAT" <<BAT
 @ECHO OFF
 ASPISCAN > AUX
-QICREAD > AUX
+QICREAD $WRITE > AUX
 ECHO PORTASPI QIC DONE > AUX
 BAT
 sed -i 's/$/\r/' "$OUT/AUTOEXEC.BAT"
@@ -136,11 +174,18 @@ mdel -i "$OUT/boot.img" ::/BIG.BIN ::/AHCIASPI.SYS 2>/dev/null || true
 mcopy -o -i "$OUT/boot.img" "$OUT/CONFIG.SYS" "$OUT/AUTOEXEC.BAT" ::/
 mcopy -o -i "$OUT/boot.img" "$MGR" ::/PORTASPI.SYS
 mcopy -o -i "$OUT/boot.img" "$OPENASPI/build/dos/ASPISCAN.COM" "$OUT/QICREAD.COM" ::/
+PORTASPI=$ROOT
 ROOT=$OPENASPI
 source "$OPENASPI/tests/86box_run.sh"
 run_86box_dos --done 'PORTASPI QIC DONE' \
     --expect 'type=01 TAPE' --count 1 \
     --read-text 'QICREAD DONE' --steps ${STEPS:-300}
-tr -d '\r' < "$OUT/serial.log" | grep -E '^(VOL|EOD|BACK|SPACED) ' > "$OUT/got.txt" || true
+tr -d '\r' < "$OUT/serial.log" | grep -E '^(FULL|VOL|EOD|BACK|SPACED) ' > "$OUT/got.txt" || true
 diff -u "$OUT/expect.txt" "$OUT/got.txt"
+if [ -n "$WRITE" ]; then
+    python3 -I "$PORTASPI/tests/qictape.py" "$OUT/tape.img" \
+        --check "$(cat "$OUT/first.txt")" > "$OUT/got-img.txt"
+    diff -u "$OUT/expect-img.txt" "$OUT/got-img.txt"
+    echo "86Box floppy tape through PORTASPI: written ($WRITE), the image checked"
+fi
 echo "86Box floppy tape through PORTASPI: $(grep -c '^VOL' "$OUT/got.txt") volumes read and compared, filemarks spaced"

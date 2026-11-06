@@ -1,7 +1,8 @@
 ; QICECC.COM - runs PORTASPI's floppy tape Reed-Solomon code (src/qicecc.inc)
 ; on the segments of VEC.BIN, which tests/qictape.py --ecc-vectors writes:
 ; each an 8 byte header (n good sectors, the number of erasures, their
-; three places, 3 bytes unused) and the n sectors, damaged.  It prints
+; three places, 2 to encode, 2 bytes unused) and the n sectors, damaged
+; (to encode: the data, the parity sectors anything).  It prints
 ;   ECC i r crc
 ; r 0 if the segment was put right (crc: the CRC-32 of its n sectors),
 ; 1 if it was found damaged beyond repair; then QICECC DONE.
@@ -44,8 +45,14 @@ start:  cld
         mov     [qt_era], ax
         mov     al, [hdr+4]
         mov     [qt_era+2], al
+        cmp     byte [hdr+5], 2
+        je      .enc
         call    qt_ecc
         setc    [result]
+        jmp     .res
+.enc:   call    qt_encode
+        mov     byte [result], 0
+.res:
         mov     dx, msg_ecc
         call    puts
         mov     eax, [index]

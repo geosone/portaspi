@@ -100,6 +100,9 @@ QT_INT_TICKS    equ     37              ; a seek: 2 s
 SNS_QT_HW       equ     04h | (44h << 8)        ; internal target failure
 SNS_QT_FORMAT   equ     03h | (30h << 8) | (02h << 16)  ; incompatible format
 SNS_QT_READ     equ     03h | (11h << 8)        ; unrecovered read error
+SNS_QT_WRITE    equ     03h | (0Ch << 8)        ; write error
+SNS_QT_FULL     equ     0Dh | (00h << 8) | (02h << 16)  ; end of medium
+SNS_QT_POS      equ     05h | (24h << 8)        ; not at a volume's start
 SNS_QT_FM       equ     00h | (00h << 8) | (01h << 16)  ; filemark
 SNS_QT_EOD      equ     08h | (00h << 8) | (05h << 16)  ; end of data
 SNS_QT_BOT      equ     00h | (00h << 8) | (04h << 16)  ; beginning of partition
@@ -178,6 +181,10 @@ qic_exec:
         je      .msense
         cmp     al, 08h                 ; READ (6)
         je      .read
+        cmp     al, 0Ah                 ; WRITE (6)
+        je      .write
+        cmp     al, 10h                 ; WRITE FILEMARKS
+        je      .wfm
         cmp     al, 11h                 ; SPACE
         je      .space
         mov     si, qt_nops
@@ -225,6 +232,8 @@ qic_exec:
         jmp     .good
 
 .rewind:
+        call    qt_wclose               ; what was written ends here
+        jc      .sense
         call    qt_rewind
         jc      .sense
         mov     byte [qt_vol], 0
@@ -237,11 +246,34 @@ qic_exec:
         jne     .badfield
         call    qt_load
         jc      .sense
+        call    qt_wclose
+        jc      .sense
         call    qt_read
         jc      .sense
         jmp     .good
 
+.write: test    byte [cdb_buf+1], 1     ; fixed blocks: not offered
+        jnz     .badfield
+        cmp     byte [cdb_buf+2], 0     ; at most 65535 bytes
+        jne     .badfield
+        call    qt_load
+        jc      .sense
+        call    qt_write
+        jc      .sense
+        jmp     .good
+
+.wfm:   call    qt_load
+        jc      .sense
+        mov     eax, [cdb_buf+1]        ; any filemarks: the volume ends
+        and     eax, 0FFFFFF00h
+        jz      .good                   ; none: nothing is held back
+        call    qt_wclose
+        jc      .sense
+        jmp     .good
+
 .space: call    qt_load
+        jc      .sense
+        call    qt_wclose
         jc      .sense
         call    qt_space
         jc      .sense
@@ -290,7 +322,7 @@ qt_unhook_if:
         mov     word [qt_old0e+2], 0
 .o:     ret
 
-qt_nops         db      0Bh, 10h, 15h, 16h, 17h, 1Bh, 1Eh, 0FFh
+qt_nops         db      0Bh, 15h, 16h, 17h, 1Bh, 1Eh, 0FFh
 qt_limits       db      0, 0, 0FFh, 0FFh, 0, 1  ; 1 to 65535 bytes
 qt_status       db      0               ; the last drive status
 
@@ -308,6 +340,7 @@ qt_ready:
         test    al, QS_NEWCART
         jz      .again
         mov     byte [qt_loaded], 0
+        mov     byte [qt_wopen], 0      ; what was not written is lost
         mov     byte [qt_running], 0
         mov     byte [qt_track], 0FFh
         mov     dword [qt_bseg], 0FFFFFFFFh
@@ -378,6 +411,12 @@ qt_spt          dw      150             ; segments a track
 qt_spc          db      4               ; segments a cylinder
 qt_sph          dw      600             ; segments a head
 qt_first        dd      0               ; first data segment: the volume table
+qt_last         dd      0               ; last data segment
+qt_wopen        db      0               ; a volume is being written
+qt_wseg         dd      0               ; the segment the buffer fills
+qt_wfill        dw      0               ; with this many bytes
+qt_wstart       dd      0               ; the volume's first segment
+qt_wsize        dd      0               ; and its bytes so far
 qt_nbad         dw      0
 qt_badlist      times QT_MAXBAD * 8 db 0        ; segment, sector mask
 qt_nvol         db      0
@@ -404,6 +443,7 @@ qt_rseg         dd      0
 qt_tries        db      0
 qt_rmask        dd      0
 qt_rdone        dd      0               ; sectors in the buffer (or erased)
+qt_wrmode       db      0               ; qt_read_seg writes the buffer
 qt_res          times 7 db 0            ; result bytes of a read or READ ID
 qt_idsec        db      0               ; READ ID: sector in the segment
 
@@ -601,6 +641,389 @@ qt_space:
         stc
         ret
 
+;-----------------------------------------------------------------------------
+; Writing
+;
+; A volume is written at the end of data, or at the start of a volume,
+; which ends the cartridge there (as a tape written from the load point
+; is new from there on).  WRITE (6) fills the segment buffer and writes
+; each segment as it fills, with its parity; any filemark, REWIND, SPACE
+; or READ end the volume: its last segment, and its entry in the volume
+; table, the entries after it dropped.
+;-----------------------------------------------------------------------------
+
+; WRITE (6) of variable blocks.  CF and EAX = the sense.
+qt_write:
+        test    byte [qt_status], QS_WPROT
+        jz      .rw
+        mov     eax, SNS_WPROT
+        stc
+        ret
+.rw:    movzx   ecx, word [cdb_buf+3]
+        xchg    cl, ch
+        cmp     ecx, [x_len]
+        jbe     .len
+        mov     ecx, [x_len]
+        mov     byte [x_over], 1
+.len:   or      ecx, ecx
+        jz      .ok
+        cmp     byte [qt_wopen], 0
+        jne     .fill
+        push    ecx
+        call    qt_wbegin
+        pop     ecx
+        jnc     .fill
+        cmp     eax, SNS_QT_FULL        ; no room for it at all
+        je      .eom
+        stc
+        ret
+.fill:  mov     eax, [qt_wseg]          ; the cartridge is full
+        cmp     eax, [qt_last]
+        jbe     .go
+        jmp     .eom
+.go:    push    ds
+        lds     si, [x_buf]
+.l:     mov     ax, [cs:qt_bcap]        ; room in the segment
+        sub     ax, [cs:qt_wfill]
+        movzx   eax, ax
+        cmp     eax, ecx
+        jbe     .c
+        mov     eax, ecx
+.c:     push    ecx
+        mov     ecx, eax
+        push    cs
+        pop     es
+        mov     di, [cs:qt_buf]
+        add     di, [cs:qt_wfill]
+        add     [cs:qt_wfill], ax
+        add     [cs:qt_wsize], eax
+        add     [cs:x_xfer], eax
+        mov     edx, eax
+        rep     movsb
+        push    si                      ; DS:SI on: keep the offset small
+        shr     si, 4
+        mov     ax, ds
+        add     ax, si
+        mov     ds, ax
+        pop     si
+        and     si, 0Fh
+        pop     ecx
+        sub     ecx, edx
+        mov     ax, [cs:qt_wfill]
+        cmp     ax, [cs:qt_bcap]
+        jb      .more
+        push    ds
+        push    cs
+        pop     ds
+        push    ecx
+        call    qt_wflush               ; the segment is full
+        pop     ecx
+        pop     ds
+        jc      .full
+.more:  or      ecx, ecx
+        jnz     .l
+        pop     ds
+.ok:    clc
+.o:     ret
+.full:  pop     ds                      ; what is left was not written
+        cmp     eax, SNS_QT_FULL
+        jne     .err
+        or      ecx, ecx                ; it all went: the next one ends
+        jz      .ok
+.eom:   mov     eax, SNS_QT_FULL
+        mov     [qt_sinfo], ecx         ; the residue: the rest of the block
+        mov     byte [qt_svalid], 1
+        mov     byte [qt_sflags], QT_FL_EOM
+.err:   stc
+        ret
+
+; a volume at the position: where it starts, the volumes from here on
+; dropped.  CF and EAX = the sense.
+qt_wbegin:
+        cmp     dword [qt_voff], 0      ; at a volume's start or the end
+        je      .at
+        mov     eax, SNS_QT_POS
+        stc
+        ret
+.at:    mov     al, [qt_vol]
+        cmp     al, [qt_nvol]
+        jbe     .k
+        mov     al, [qt_nvol]
+.k:     cmp     al, QT_MAXVOL
+        jb      .room
+        mov     eax, SNS_QT_FULL
+        stc
+        ret
+.room:  push    ax
+        movzx   bx, al
+        mov     eax, [qt_first]         ; after the volume table
+        or      bx, bx
+        jz      .s
+        dec     bx
+        imul    bx, bx, 12
+        mov     eax, [qt_vols+bx+4]     ; or after the volume before
+.s:     inc     eax
+        mov     [qt_wseg], eax
+        call    qt_wnext                ; a segment with room, or none
+        pop     bx
+        jc      .o
+        mov     [qt_vol], bl
+        mov     [qt_nvol], bl           ; the cartridge ends here
+        mov     eax, [qt_wseg]
+        mov     [qt_wstart], eax
+        mov     dword [qt_wsize], 0
+        mov     byte [qt_wopen], 1
+.o:     ret
+
+; the next segment for the buffer: [qt_wseg] on, one with room.  CF and
+; EAX = the sense at the end of the cartridge.
+qt_wnext:
+        mov     dword [qt_bseg], 0FFFFFFFFh
+        mov     word [qt_wfill], 0
+.l:     mov     eax, [qt_wseg]
+        cmp     eax, [qt_last]
+        ja      .full
+        call    qt_capacity
+        mov     [qt_bcap], ax
+        or      ax, ax
+        jnz     .ok
+        inc     dword [qt_wseg]
+        jmp     .l
+.ok:    clc
+        ret
+.full:  mov     eax, SNS_QT_FULL
+        stc
+        ret
+
+; write the buffer to segment [qt_wseg] (filled up with zeros) and go on
+; to the next.  CF and EAX = the sense.
+qt_wflush:
+        mov     di, [qt_buf]
+        add     di, [qt_wfill]
+        mov     cx, [qt_bcap]
+        sub     cx, [qt_wfill]
+        push    cs
+        pop     es
+        xor     al, al
+        rep     stosb
+        mov     eax, [qt_wseg]
+        mov     byte [qt_wrmode], 1
+        call    qt_read_seg
+        mov     byte [qt_wrmode], 0
+        jc      .o
+        inc     dword [qt_wseg]
+        call    qt_wnext
+.o:     ret
+
+; end the volume being written, if one is: its last segment and its entry
+; in the volume table.  CF and EAX = the sense.
+qt_wclose:
+        cmp     byte [qt_wopen], 0
+        jne     .open
+        clc
+        ret
+.open:  mov     byte [qt_wopen], 0
+        mov     ebx, [qt_wseg]          ; the last segment holding data
+        cmp     word [qt_wfill], 0
+        je      .last
+        push    ebx
+        call    qt_wflush
+        pop     ebx
+        jnc     .end
+        cmp     eax, SNS_QT_FULL        ; written; no segment after it
+        jne     .o
+        jmp     .end
+.last:  dec     ebx                     ; nothing in this one
+        cmp     ebx, [qt_wstart]
+        jae     .end
+        mov     ebx, [qt_wstart]        ; an empty volume: one segment
+.end:   movzx   si, byte [qt_vol]       ; the volume
+        imul    si, si, 12
+        mov     eax, [qt_wstart]
+        mov     [qt_vols+si], eax
+        mov     [qt_vols+si+4], ebx
+        mov     eax, [qt_wsize]
+        mov     [qt_vols+si+8], eax
+        call    qt_vtbl_write
+        jc      .o
+        inc     byte [qt_nvol]
+        inc     byte [qt_vol]           ; after the filemark: the end of data
+        call    qt_vol_start
+        clc
+.o:     ret
+
+; the entry of volume [qt_vol] (qt_vols) into the volume table, after the
+; entries of the volumes before it; the rest of the table cleared.  CF
+; and EAX = the sense.
+qt_vtbl_write:
+        mov     eax, [qt_first]
+        call    qt_read_seg
+        jc      .o
+        mov     si, [qt_buf]            ; the [qt_vol]-th VTBL entry
+        mov     cx, [qt_bcap]
+        shr     cx, 7
+        mov     dl, [qt_vol]
+.e:     jcxz    .full
+        cmp     dword [si], 'VTBL'
+        jne     .other
+        or      dl, dl
+        jz      .here
+        dec     dl
+        jmp     .n
+.other: cmp     dword [si], 'XTBL'      ; the others are kept
+        je      .n
+        cmp     dword [si], 'UTID'
+        je      .n
+        cmp     dword [si], 'EXVT'
+        jne     .here                   ; the end of the table
+.n:     add     si, 128
+        dec     cx
+        jmp     .e
+.full:  mov     eax, SNS_QT_FULL
+        stc
+        ret
+.here:  push    cs                      ; clear it and all after it
+        pop     es
+        mov     di, si
+        push    cx
+        shl     cx, 7
+        xor     al, al
+        rep     stosb
+        pop     cx
+        mov     dword [si], 'VTBL'
+        movzx   bx, byte [qt_vol]
+        imul    bx, bx, 12
+        mov     eax, [qt_vols+bx]       ; first and last segment
+        mov     edx, [qt_vols+bx+4]
+        cmp     byte [qt_fmt], 6
+        je      .big
+        mov     [si+4], ax
+        mov     [si+6], dx
+        jmp     .desc
+.big:   mov     [si+76], eax
+        mov     [si+80], edx
+        sub     edx, eax
+        inc     edx
+        mov     [si+4], edx             ; its segments
+        mov     word [si+58], 113       ; QIC-113 rev. G
+        mov     word [si+60], 7
+.desc:  mov     eax, [qt_vols+bx+8]     ; the data's size, 8 bytes
+        mov     [si+96], eax
+        push    si
+        lea     di, [si+8]              ; the description, blank padded
+        mov     si, qt_vdesc
+        mov     cx, 44
+        rep     movsb
+        pop     si
+        mov     al, [qt_vol]            ; its number
+        aam
+        add     ax, '00'
+        xchg    al, ah
+        mov     [si+8+16], ax
+        call    qt_stamp
+        mov     [si+52], eax            ; the date
+        mov     byte [si+56], 14h       ; not verified, segment spanning
+        mov     byte [si+57], 1         ; cartridge 1 of 1
+        mov     eax, [qt_first]
+        mov     byte [qt_wrmode], 1
+        call    qt_read_seg
+        mov     byte [qt_wrmode], 0
+.o:     ret
+
+qt_vdesc        db      'PORTASPI volume 00                          '
+
+; the time now, as the QIC-80 volume table has it -> EAX: the year from
+; 1970 in the top 7 bits, the seconds of that year in the rest (months of
+; 31 days)
+qt_stamp:
+        push    ebx
+        push    ecx
+        push    edx
+        mov     ah, 04h                 ; the date, BCD
+        int     1Ah
+        jc      .zero
+        push    dx
+        mov     al, ch
+        call    qt_bcd
+        mov     bl, 100
+        mul     bl
+        push    ax
+        mov     al, cl
+        call    qt_bcd
+        pop     bx
+        xor     ah, ah
+        add     ax, bx
+        sub     ax, 1970
+        jb      .zz
+        movzx   ebx, ax
+        shl     ebx, 25                 ; the year
+        pop     dx
+        mov     al, dh
+        call    qt_bcd
+        dec     al
+        mov     cl, 31
+        mul     cl                      ; (month - 1) * 31
+        push    ax
+        mov     al, dl
+        call    qt_bcd
+        dec     al
+        xor     ah, ah
+        pop     cx
+        add     ax, cx                  ; + day - 1
+        movzx   ecx, ax
+        push    ecx
+        mov     ah, 02h                 ; the time, BCD
+        int     1Ah
+        pop     eax
+        jc      .z2
+        push    dx
+        push    cx
+        imul    eax, eax, 24
+        pop     cx
+        push    cx
+        push    eax
+        mov     al, ch
+        call    qt_bcd
+        movzx   edx, al
+        pop     eax
+        add     eax, edx                ; hours
+        imul    eax, eax, 60
+        pop     cx
+        push    eax
+        mov     al, cl
+        call    qt_bcd
+        movzx   edx, al
+        pop     eax
+        add     eax, edx                ; minutes
+        imul    eax, eax, 60
+        pop     dx
+        push    eax
+        mov     al, dh
+        call    qt_bcd
+        movzx   edx, al
+        pop     eax
+        add     eax, edx                ; seconds
+        or      eax, ebx
+        jmp     .o
+.zz:    pop     dx
+.z2:
+.zero:  xor     eax, eax
+.o:     pop     edx
+        pop     ecx
+        pop     ebx
+        ret
+
+; AL (BCD) -> AL
+qt_bcd: push    cx
+        mov     cl, al
+        shr     al, 4
+        mov     ch, 10
+        mul     ch
+        and     cl, 0Fh
+        add     al, cl
+        pop     cx
+        ret
+
 ; to the load point, the head on track 0.  CF and EAX = the sense.
 qt_rewind:
         call    qt_stop
@@ -730,6 +1153,11 @@ qt_header:
         jne     .f
         mov     eax, [si+242]
 .f:     mov     [qt_first], eax
+        movzx   eax, word [si+12]       ; last data segment
+        cmp     byte [qt_fmt], 6
+        jne     .l
+        mov     eax, [si+246]
+.l:     mov     [qt_last], eax
         mov     ax, [si+24]
         or      ax, ax
         jz      .bad
@@ -949,6 +1377,9 @@ qt_read_seg:
 .read:  mov     byte [qt_tries], 3
         mov     dword [qt_rdone], 0     ; a new try goes on where one ended
         mov     byte [qt_nera], 0
+        cmp     byte [qt_wrmode], 0
+        je      .again
+        call    qt_encode               ; writing: the parity first
 .again: mov     eax, [qt_rseg]
         call    qt_locate
         jc      .o
@@ -992,8 +1423,11 @@ qt_read_seg:
         add     bl, bh
         jmp     .run
 .read_ok:
+        cmp     byte [qt_wrmode], 0
+        jne     .streams
         call    qt_ecc                  ; a damaged sector is put right
         jc      .rderr
+.streams:
         mov     eax, [qt_rseg]          ; the tape streams on
         inc     eax
         mov     [qt_next], eax
@@ -1007,7 +1441,9 @@ qt_read_seg:
         mov     [qt_bseg], eax
         clc
         jmp     .o
-.err:   cmp     al, 2                   ; a CRC error: the sectors before it
+.err:   cmp     byte [qt_wrmode], 0
+        jne     .err1
+        cmp     al, 2                   ; a CRC error: the sectors before it
         jne     .err1                   ; are in, it is an erasure
         mov     bh, ah
         call    qt_mark
@@ -1032,7 +1468,10 @@ qt_read_seg:
         jnz     .again
 .rderr: call    qt_stop
         mov     eax, SNS_QT_READ
-        stc
+        cmp     byte [qt_wrmode], 0
+        je      .rf
+        mov     eax, SNS_QT_WRITE
+.rf:    stc
 .o:     pop     di
         pop     si
         pop     edx
@@ -1315,6 +1754,7 @@ qt_run:
         movzx   cx, bh
         shl     cx, 10
         call    qt_dma
+        call    qt_podfill
         mov     eax, [qt_rseg]
         xor     edx, edx
         movzx   ecx, word [qt_sph]
@@ -1331,7 +1771,10 @@ qt_run:
         call    qt_select
         call    qt_int_clear
         mov     al, 46h                 ; READ DATA, MFM
-        call    qt_out
+        cmp     byte [qt_wrmode], 0
+        je      .cmd
+        mov     al, 45h                 ; WRITE DATA, MFM
+.cmd:   call    qt_out
         jc      .f
         mov     al, [qt_unit]
         call    qt_out
@@ -1384,8 +1827,38 @@ qt_run:
         pop     bx
         ret
 
+; the Ditto, writing: BH sectors from CS:DI into its buffer, at the same
+; offset; each byte clocked in as bk_sput does (not register 04h bit 7's
+; burst, in which a change of the data lines also takes a byte)
+qt_podfill:
+        cmp     byte [qt_wrmode], 0
+        je      .o
+        cmp     byte [qt_bp], 0
+        je      .o
+        pushad
+        push    es
+        mov     dx, [lpt_base]
+        mov     ax, di
+        sub     ax, [qt_buf]
+        movzx   eax, ax
+        push    bx
+        mov     bl, BP_REG_MEMADDR
+        call    fd_set3
+        pop     bx
+        movzx   cx, bh
+        shl     cx, 10
+        push    cs
+        pop     es
+        mov     al, BP_REG_MEMORY
+        call    bk_sput
+        pop     es
+        popad
+.o:     ret
+
 ; the Ditto: BH sectors from its buffer to CS:DI, at the same offset
 qt_podcopy:
+        cmp     byte [qt_wrmode], 0
+        jne     .o
         cmp     byte [qt_bp], 0
         je      .o
         or      bh, bh
@@ -1442,7 +1915,10 @@ qt_dma:
         out     0Ah, al
         out     0Ch, al                 ; the flip-flop
         mov     al, 46h                 ; single, increment, write memory
-        out     0Bh, al
+        cmp     byte [qt_wrmode], 0
+        je      .mode
+        mov     al, 4Ah                 ; or read it
+.mode:  out     0Bh, al
         pop     eax
         out     04h, al
         mov     al, ah

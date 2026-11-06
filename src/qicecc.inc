@@ -19,6 +19,10 @@
 ; once a segment and applied to each column.  The syndromes left over
 ; must then agree, or there is more damage than the erasures.
 ;
+; Writing, the parity of a column m_0 .. m_n-4 is the remainder of
+; m(x) x^3 by g(x) = (x + a^-1)(x + 1)(x + a) = x^3 + c x^2 + c x + 1,
+; c = a^-1 + 1 + a = C0h: qt_encode.
+;
 ; Uses [qt_buf] (the segment's good sectors, one after the other) and
 ; [qt_bcap] (their data bytes), qt_nera and qt_era (the erasures, as
 ; places in the buffer).  Test tool: tests/qicecc.asm.
@@ -34,6 +38,7 @@ qt_ga           times 9 db 0            ; A, row by row
 qt_gm           times 9 db 0            ; its inverse
 qt_syn          times 3 db 0            ; S0, S1, S-1 of a column
 qt_err          times 3 db 0            ; the errors of the erasures
+gf_c0           times 256 db 0          ; v * C0h
 
 qt_gf_init:
         push    ax
@@ -54,6 +59,14 @@ qt_gf_init:
         jb      .l
         mov     al, [gf_exp]
         mov     [gf_exp+510], al
+        xor     bx, bx                  ; v * C0h
+.c:     mov     al, bl
+        mov     ah, 0C0h
+        call    gf_mul
+        mov     [gf_c0+bx], al
+        inc     bx
+        cmp     bx, 256
+        jb      .c
         pop     cx
         pop     bx
         pop     ax
@@ -409,4 +422,36 @@ qt_era_col:
         pop     cx
         pop     bx
         pop     ax
+        ret
+
+; the three parity sectors of the segment in the buffer: [qt_bcap] bytes
+; of data, the parity after them
+qt_encode:
+        pushad
+        mov     bp, [qt_bcap]
+        shr     bp, 10                  ; data sectors
+        xor     di, di                  ; column
+.col:   mov     si, [qt_buf]
+        add     si, di
+        mov     cx, bp
+        xor     dx, dx                  ; DL = r0, DH = r1
+        xor     ah, ah                  ; AH = r2
+.m:     mov     al, [si]                ; c = m ^ r0
+        xor     al, dl
+        movzx   bx, al
+        mov     bl, [gf_c0+bx]          ; c * C0h
+        mov     dl, dh                  ; r0 = r1 ^ t
+        xor     dl, bl
+        mov     dh, ah                  ; r1 = r2 ^ t
+        xor     dh, bl
+        mov     ah, al                  ; r2 = c
+        add     si, 1024
+        loop    .m
+        mov     [si], dl                ; highest degree first
+        mov     [si+1024], dh
+        mov     [si+2048], ah
+        inc     di
+        cmp     di, 1024
+        jb      .col
+        popad
         ret

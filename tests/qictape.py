@@ -142,14 +142,15 @@ def put_segment(img, bad, seg, data):
         img.write(sec)
 
 
-def header(bad, label):
+def header(bad, label, end=None):
     h = bytearray(29 * SECTOR)
+    last = SEGMENTS - 1 if end is None else end
     struct.pack_into("<I", h, 0, 0x82288228 if D2G else 0xAA55AA55)
     h[4] = FMT
     if FMT == 6:
-        struct.pack_into("<IIII", h, 234, 0, 1, 2, SEGMENTS - 1)
+        struct.pack_into("<IIII", h, 234, 0, 1, 2, last)
     else:
-        struct.pack_into("<HHHH", h, 6, 0, 1, 2, SEGMENTS - 1)
+        struct.pack_into("<HHHH", h, 6, 0, 1, 2, last)
     struct.pack_into("<H", h, 24, SPT)
     h[26] = TRACKS
     h[27] = (SEGMENTS - 1) // SEGS_PER_HEAD     # max floppy side
@@ -209,6 +210,8 @@ ECC_CASES = [
     (32, [4, 5], [20], False),
     (32, [], [2, 6], False),
 ]
+# n good sectors to encode
+ENC_CASES = [32, 29, 4]
 
 
 def ecc_vectors(vec, expect):
@@ -232,6 +235,14 @@ def ecc_vectors(vec, expect):
                 x.write("ECC %d 0 %08X\n" % (i, zlib.crc32(good)))
             else:
                 x.write("ECC %d 1\n" % i)
+        for j, n in enumerate(ENC_CASES):
+            i = len(ECC_CASES) + j
+            secs = encode([bytes(rnd.randrange(256) for _ in range(SECTOR))
+                           for _ in range(n - 3)])
+            v.write(bytes([n, 0, 0, 0, 0, 2, 0, 0]))
+            v.write(b"".join(secs[:-3]) + bytes(rnd.randrange(256)
+                                                for _ in range(3 * SECTOR)))
+            x.write("ECC %d 0 %08X\n" % (i, zlib.crc32(b"".join(secs))))
         x.write("QICECC DONE\n")
 
 
@@ -246,11 +257,11 @@ def damage(path, spots):
             img.write(data)
 
 
-def make(path, files, bad, label, last_at=None):
+def make(path, files, bad, label, last_at=None, end=None):
     with open(path, "wb") as img:
         img.truncate(SEGMENTS * SEGMENT)
-        put_segment(img, bad, 0, header(bad, label))
-        put_segment(img, bad, 1, header(bad, label))
+        put_segment(img, bad, 0, header(bad, label, end))
+        put_segment(img, bad, 1, header(bad, label, end))
         seg = 3
         table = b""
         for i, name in enumerate(files):
@@ -273,7 +284,9 @@ def make(path, files, bad, label, last_at=None):
         put_segment(img, bad, 2, table)
 
 
-def listing(path):
+def listing(path, check=None):
+    """The volumes of a cartridge image; with check, from volume check on
+    their segments' parity, and each volume's size and CRC-32."""
     with open(path, "rb") as img:
         hdr = bytearray(img.read(SEGMENT))
         if hdr[:4] == b"\x28\x82\x28\x82":
@@ -313,7 +326,28 @@ def listing(path):
             else:
                 start, end = struct.unpack_from("<HH", e, 4)
             size = struct.unpack_from("<Q", e, 96)[0]
-            print(start, end, size, e[8:52].decode("ascii").rstrip())
+            if check is None:
+                print(start, end, size, e[8:52].decode("ascii").rstrip())
+                continue
+            vol = i // 128
+            data, wrong = b"", 0
+            for seg in range(start, end + 1):
+                good = good_sectors(bad, seg)
+                if len(good) <= 3:
+                    continue
+                secs = []
+                for pos in good:
+                    img.seek(seg * SEGMENT + pos * SECTOR)
+                    secs.append(img.read(SECTOR))
+                if vol >= check and encode(secs[:-3]) != secs:
+                    wrong += 1
+                data += b"".join(secs[:-3])
+            data = data[:size]
+            if vol < check:             # may be damaged on purpose
+                print("TBL %d %d" % (vol, size))
+            else:
+                print("IMG %d %d %08X" % (vol, len(data), zlib.crc32(data)))
+                print("PARITY %d %d" % (vol, wrong))
 
 
 def main():
@@ -328,14 +362,18 @@ def main():
     p.add_argument("--last-at", type=int,
                    help="the segment the last volume starts at")
     p.add_argument("--label", default="PORTASPI test tape")
+    p.add_argument("--end", type=int,
+                   help="the last data segment the header gives")
     p.add_argument("--list", action="store_true")
+    p.add_argument("--check", type=int, metavar="FIRST",
+                   help="list the volumes; from volume FIRST on their CRCs and parity")
     p.add_argument("--ecc-vectors", nargs=2, metavar=("VEC", "EXPECT"))
     a = p.parse_args()
     if a.ecc_vectors:
         ecc_vectors(*a.ecc_vectors)
         return
-    if a.list:
-        listing(a.image)
+    if a.list or a.check is not None:
+        listing(a.image, a.check)
         return
     set_format(a.format)
     bad = {}
@@ -348,7 +386,7 @@ def main():
             bad[seg] = ALL
         else:
             bad[seg] = bad.get(seg, 0) | (1 << int(sec))
-    make(a.image, a.files, bad, a.label, a.last_at)
+    make(a.image, a.files, bad, a.label, a.last_at, a.end)
     damage(a.image, [tuple(int(v) for v in d.split(":")) for d in a.damage])
 
 
