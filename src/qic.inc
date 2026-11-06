@@ -162,7 +162,12 @@ qic_exec:
         mov     al, [cdb_buf]
         cmp     al, SCSI_REQUEST_SENSE
         je      .rsense
-        mov     dword [qt_sns], 0       ; a new command clears the sense
+        cmp     al, 11h                 ; only SPACE goes back over the
+        je      .keep                   ; filemarks after a volume's end
+        cmp     al, 00h
+        je      .keep
+        mov     byte [qt_xfm], 0
+.keep:  mov     dword [qt_sns], 0       ; a new command clears the sense
         mov     byte [qt_sflags], 0
         mov     byte [qt_svalid], 0
         cmp     al, SCSI_INQUIRY
@@ -184,6 +189,8 @@ qic_exec:
         je      .rewind
         cmp     al, 1Ah                 ; MODE SENSE (6)
         je      .msense
+        cmp     al, 15h                 ; MODE SELECT (6)
+        je      .mselect
         cmp     al, 08h                 ; READ (6)
         je      .read
         cmp     al, 0Ah                 ; WRITE (6)
@@ -247,11 +254,7 @@ qic_exec:
         call    qt_vol_start
         jmp     .good
 
-.read:  test    byte [cdb_buf+1], 1     ; fixed blocks: not offered
-        jnz     .badfield
-        cmp     byte [cdb_buf+2], 0     ; at most 65535 bytes
-        jne     .badfield
-        call    qt_load
+.read:  call    qt_load
         jc      .sense
         call    qt_wclose
         jc      .sense
@@ -259,11 +262,7 @@ qic_exec:
         jc      .sense
         jmp     .good
 
-.write: test    byte [cdb_buf+1], 1     ; fixed blocks: not offered
-        jnz     .badfield
-        cmp     byte [cdb_buf+2], 0     ; at most 65535 bytes
-        jne     .badfield
-        call    qt_load
+.write: call    qt_load
         jc      .sense
         call    qt_write
         jc      .sense
@@ -279,8 +278,18 @@ qic_exec:
         mov     eax, [cdb_buf+1]        ; any filemarks: the volume ends
         and     eax, 0FFFFFF00h
         jz      .good                   ; none: nothing is held back
+        cmp     byte [qt_wopen], 0      ; (no volume open: none is made)
+        je      .good
         call    qt_wclose
         jc      .sense
+        mov     eax, [cdb_buf+1]        ; the count, 24 bits
+        BSWAP_EAX
+        and     eax, 0FFFFFFh
+        dec     eax                     ; those after the first: an end
+        cmp     eax, 255                ; of data as two filemarks make
+        jbe     .wx
+        mov     al, 255
+.wx:    mov     [qt_xfm], al
         jmp     .good
 
 .space: call    qt_load
@@ -300,12 +309,35 @@ qic_exec:
         rep     stosw
         mov     byte [ata_reply], 11    ; data length
         mov     byte [ata_reply+3], 8   ; one block descriptor
+        mov     ax, [qt_blklen]         ; the block length
+        xchg    al, ah
+        mov     [ata_reply+10], ax
         test    byte [qt_status], QS_WPROT
         jz      .ms
         mov     byte [ata_reply+2], 80h
 .ms:    mov     si, ata_reply
         mov     cx, 12
         call    ata_give
+        jmp     .good
+
+.mselect:                               ; the block descriptor's length
+        movzx   cx, byte [cdb_buf+4]
+        cmp     cx, 12
+        jb      .good                   ; none: nothing changes
+        cmp     dword [x_len], 12
+        jb      .badfield
+        push    ds
+        lds     si, [x_buf]
+        mov     al, [si+3]
+        mov     ah, [si+9]
+        mov     bx, [si+10]
+        pop     ds
+        cmp     al, 8
+        jne     .good
+        or      ah, ah                  ; at most 65535
+        jnz     .badfield
+        xchg    bl, bh
+        mov     [qt_blklen], bx
         jmp     .good
 
 .badfield:
@@ -334,7 +366,7 @@ qt_unhook_if:
         mov     word [qt_old0e+2], 0
 .o:     ret
 
-qt_nops         db      0Bh, 15h, 16h, 17h, 1Bh, 1Eh, 0FFh
+qt_nops         db      0Bh, 16h, 17h, 1Bh, 1Eh, 0FFh
 qt_limits       db      0, 0, 0FFh, 0FFh, 0, 1  ; 1 to 65535 bytes
 qt_status       db      0               ; the last drive status
 
@@ -425,6 +457,11 @@ qt_sph          dw      600             ; segments a head
 qt_first        dd      0               ; first data segment: the volume table
 qt_last         dd      0               ; last data segment
 qt_wopen        db      0               ; a volume is being written
+qt_blklen       dw      512             ; the block length of FIXED READ and
+                                        ; WRITE (MODE SELECT), 0: none
+qt_fixed        db      0               ; this READ or WRITE is FIXED
+qt_xfm          db      0               ; filemarks past the one that ended
+                                        ; it: SPACE back over them stays
 qt_wseg         dd      0               ; the segment the buffer fills
 qt_wfill        dw      0               ; with this many bytes
 qt_wstart       dd      0               ; the volume's first segment
@@ -497,19 +534,16 @@ qt_vol_size:
 ; CONDITION, FILEMARK, the residue in the information.  CF and EAX = the
 ; sense on failure.
 qt_read:
-        movzx   eax, word [cdb_buf+3]
-        xchg    al, ah
-        cmp     eax, [x_len]
-        jbe     .len
-        mov     eax, [x_len]
-        mov     byte [x_over], 1
-.len:   mov     [qt_left], eax
+        call    qt_xlen
+        jc      .o
+        mov     [qt_left], eax
         or      eax, eax
         jz      .ok
         mov     al, [qt_vol]
         cmp     al, [qt_nvol]
         jb      .vol
         mov     eax, [qt_left]          ; past the last volume: end of data
+        call    qt_info
         mov     [qt_sinfo], eax
         mov     byte [qt_svalid], 1
         mov     byte [qt_sflags], QT_FL_EOM
@@ -531,13 +565,75 @@ qt_read:
         inc     byte [qt_vol]           ; the filemark: on to the next volume
         call    qt_vol_start
         mov     eax, [qt_left]
+        call    qt_info
         mov     [qt_sinfo], eax
         mov     byte [qt_svalid], 1
         mov     byte [qt_sflags], QT_FL_FM | QT_FL_ILI
+        cmp     byte [qt_fixed], 0      ; ILI: variable blocks only
+        je      .fm
+        mov     byte [qt_sflags], QT_FL_FM
+.fm:
         mov     eax, SNS_QT_FM
         stc
         ret
 .ok:    clc
+.o:     ret
+
+; the bytes READ or WRITE (6) asks for -> EAX, at most the buffer (whole
+; blocks of it); qt_fixed.  CF and EAX = the sense on a bad length.
+qt_xlen:
+        push    ecx
+        push    edx
+        movzx   ecx, byte [cdb_buf+2]   ; the 24 bit count
+        shl     ecx, 16
+        mov     ch, [cdb_buf+3]
+        mov     cl, [cdb_buf+4]
+        mov     byte [qt_fixed], 0
+        test    byte [cdb_buf+1], 1
+        jnz     .fixed
+        cmp     ecx, 65535              ; a variable block: 65535 at most
+        ja      .bad
+        mov     eax, ecx
+        jmp     .cap
+.fixed: movzx   eax, word [qt_blklen]   ; that many blocks
+        or      eax, eax
+        jz      .bad
+        mov     byte [qt_fixed], 1
+        mul     ecx
+        or      edx, edx
+        jnz     .bad
+.cap:   cmp     eax, [x_len]
+        jbe     .ok
+        mov     eax, [x_len]            ; the buffer is too short
+        mov     byte [x_over], 1
+        cmp     byte [qt_fixed], 0
+        je      .ok
+        xor     edx, edx                ; whole blocks of it
+        movzx   ecx, word [qt_blklen]
+        div     ecx
+        mul     ecx
+.ok:    clc
+        jmp     .o
+.bad:   mov     eax, SNS_BAD_FIELD
+        stc
+.o:     pop     edx
+        pop     ecx
+        ret
+
+; a residue of EAX bytes -> EAX in the unit of the command: blocks, for a
+; FIXED one (a block begun counts)
+qt_info:
+        cmp     byte [qt_fixed], 0
+        je      .o
+        push    ecx
+        push    edx
+        movzx   ecx, word [qt_blklen]
+        add     eax, ecx
+        dec     eax
+        xor     edx, edx
+        div     ecx
+        pop     edx
+        pop     ecx
 .o:     ret
 
 ; copy ECX bytes of the volume from the position to the request buffer.
@@ -628,7 +724,16 @@ qt_space:
         stc
         ret
 .back:  neg     eax                     ; to the end of the volume before
-        movzx   ebx, byte [qt_vol]      ; the n-th filemark back
+        movzx   ebx, byte [qt_xfm]      ; over the filemarks after the last
+        mov     byte [qt_xfm], 0        ; first: the end of data stays
+        cmp     ebx, eax
+        jb      .bx
+        mov     ebx, eax
+.bx:    sub     eax, ebx
+        jnz     .back2
+        clc
+        ret
+.back2: movzx   ebx, byte [qt_vol]      ; the n-th filemark back
         sub     ebx, eax
         js      .bot
         mov     [qt_vol], bl
@@ -1211,13 +1316,10 @@ qt_write:
         mov     eax, SNS_WPROT
         stc
         ret
-.rw:    movzx   ecx, word [cdb_buf+3]
-        xchg    cl, ch
-        cmp     ecx, [x_len]
-        jbe     .len
-        mov     ecx, [x_len]
-        mov     byte [x_over], 1
-.len:   or      ecx, ecx
+.rw:    call    qt_xlen
+        jc      .o
+        mov     ecx, eax
+        or      ecx, ecx
         jz      .ok
         cmp     byte [qt_wopen], 0
         jne     .fill
@@ -1282,8 +1384,10 @@ qt_write:
         jne     .err
         or      ecx, ecx                ; it all went: the next one ends
         jz      .ok
-.eom:   mov     eax, SNS_QT_FULL
-        mov     [qt_sinfo], ecx         ; the residue: the rest of the block
+.eom:   mov     eax, ecx                ; the residue: the rest of the block
+        call    qt_info
+        mov     [qt_sinfo], eax
+        mov     eax, SNS_QT_FULL
         mov     byte [qt_svalid], 1
         mov     byte [qt_sflags], QT_FL_EOM
 .err:   stc

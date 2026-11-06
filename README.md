@@ -83,7 +83,13 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   errors, erasures): the read goes on past them while the tape streams,
   and a retry only fetches what is still missing.
   REWIND, SPACE over filemarks and to the end of data, READ BLOCK LIMITS,
-  MODE SENSE and LOAD/UNLOAD are there. WRITE (6) writes a new volume at
+  MODE SENSE and LOAD/UNLOAD are there. READ and WRITE take variable
+  blocks (one request of bytes: a volume is a stream, with no record
+  boundaries) and FIXED ones of the block length MODE SELECT sets (512 to
+  start with, as MODE SENSE reports; residues then in blocks). Two or
+  more filemarks end a volume once; a SPACE back over the extra ones stays
+  at the end of data, so a session closed as ASPITAP does it (two
+  filemarks, back over one) appends. WRITE (6) writes a new volume at
   the end of data, or at the start of a volume, where the cartridge then
   ends (the volumes from there on are dropped, as on any tape written
   from a point); the segments get their parity, bad sectors are skipped,
@@ -204,6 +210,12 @@ after the filemark. `WRITE=X` starts from a blank cartridge (an empty
 image) that QICREAD formats with FORMAT MEDIUM and then writes as `W`,
 `WRITE=V` with VERIFY; with `DITTO=1` `MEDIUM_X=` takes another 86Box
 medium for it.
+`tests/dos_86box_opentape.sh` runs OpenASPI's `ASPITAP.SYS` and
+[OpenTape](https://github.com/geosone/OpenTape) on the Colorado 250 (or
+with `DITTO=1` the Ditto) with an empty cartridge: a directory tree backed
+up with `OPENTAPE --native --fixed-block 512`, rewound, verified, rewound
+and restored; the host compares the files. Variable blocks would need the
+record boundaries a QIC volume does not keep.
 `tests/dos_86box_qicecc.sh` runs the tape's Reed-Solomon code
 (`src/qicecc.inc`) on its own in DOS: `QICECC.COM` (`tests/qicecc.asm`)
 mends the segments `tests/qictape.py --ecc-vectors` writes, with one to

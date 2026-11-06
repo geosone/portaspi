@@ -42,7 +42,9 @@
    the Ditto 2GB's own cartridges and the Ditto Max's of over 65535
    segments. Up to three sectors with CRC errors a segment are put right
    (erasures; the code is tested on its own, `tests/dos_86box_qicecc.sh`,
-   since 86Box's tapes have no CRC errors). Still to do: 2 Mbit/s
+   since 86Box's tapes have no CRC errors). **OpenTape backs up and
+   restores through `ASPITAP.SYS`** on both 86Box drives, in fixed blocks
+   of 512 bytes (`tests/dos_86box_opentape.sh`). Still to do: 2 Mbit/s
    (1 Mbit/s is selected where drive and controller have it).
 4. **Floppy tape, writing and formatting**: segments with ECC, bad sector
    map, volume table, streaming. **Done**: volumes written at the end of
