@@ -30,7 +30,17 @@ test-bpck: build/PORTASPI.SYS
 test-on26: build/PORTASPI.SYS
 	OPENASPI=$(OPENASPI) MGROPT="$(if $(MODE),/M:$(MODE))" bash tests/dos_86box_on26.sh
 
+# Floppy tape (QIC-117) in 86Box: the Colorado 250 on the floppy
+# controller, or with DITTO=1 the Iomega Ditto; WRITE=W|T|F|X|V writes,
+# fills or formats first (see tests/dos_86box_qic.sh)
+test-qic: build/PORTASPI.SYS
+	OPENASPI=$(OPENASPI) bash tests/dos_86box_qic.sh
+
+# OpenTape backs a tree up to the floppy tape, verifies and restores it
+test-opentape: build/PORTASPI.SYS
+	OPENASPI=$(OPENASPI) bash tests/dos_86box_opentape.sh
+
 clean:
 	rm -rf build
 
-.PHONY: all test test-ls120 test-bpck test-on26 clean
+.PHONY: all test test-ls120 test-bpck test-on26 test-qic test-opentape clean

@@ -30,7 +30,7 @@
    protocols (FRPW/FRIQ and ON26 are done, the rest are rare) and ATA
    disks with the
    SCSI-to-ATA translation.
-3. **Floppy tape, reading**: QIC-117 on the floppy controller and on
+3. **Floppy tape, reading (0.6)**: QIC-117 on the floppy controller and on
    parallel port FDC adapters; reading QIC-80/3010/3020 tapes into
    `ASPITAP.SYS` and OpenTape. 86Box has both: the floppy tape drive and
    the Ditto parallel port drive. **QIC-80 on the floppy controller is
@@ -46,7 +46,7 @@
    restores through `ASPITAP.SYS`** on both 86Box drives, in fixed blocks
    of 512 bytes (`tests/dos_86box_opentape.sh`). Still to do: 2 Mbit/s
    (1 Mbit/s is selected where drive and controller have it).
-4. **Floppy tape, writing and formatting**: segments with ECC, bad sector
+4. **Floppy tape, writing and formatting (0.6)**: segments with ECC, bad sector
    map, volume table, streaming. **Done**: volumes written at the end of
    data or over a volume (the cartridge ending there), on every drive and
    format of step 3, the volume table kept; FORMAT MEDIUM of blank

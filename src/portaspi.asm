@@ -1,14 +1,20 @@
 ;=============================================================================
 ; PORTASPI.SYS - ASPI manager for parallel port devices
 ;
-; ASPI manager (SCSIMGR$) for SCSI devices behind a parallel port chip.
-; This version knows Iomega's chips: the PPA3 of the ZIP 100 parallel port
-; drive (ppa.inc) and the IMM of the ZIP Plus and ZIP 250 (imm.inc); and
-; the Shuttle EPAT bridge to an ATAPI drive, as in the parallel port
-; SuperDisk LS-120 (epat.inc), and the Micro Solutions BackPack bridge, as
-; in the BackPack CD-ROM (bpck.inc); ATAPI on both in atapi.inc.  It works alone or together with other ASPI
-; managers: it chains to a manager loaded before it, and managers loaded
-; after it can chain to it.
+; ASPI manager (SCSIMGR$) for devices behind a parallel port chip, and for
+; floppy tape drives.  It knows Iomega's PPA3 (ZIP 100, ppa.inc) and IMM
+; (ZIP Plus, ZIP 250, imm.inc), which carry SCSI; and bridges to ATAPI and
+; ATA drives, ATAPI passed through (atapi.inc) and ATA disks translated
+; from SCSI (ata.inc): Shuttle's EPAT (the SuperDisk LS-120, epat.inc) and
+; EPIA (epia.inc), Micro Solutions' BackPack (bpck.inc; also its floppy
+; drive, fdc.inc, and the Mitsumi CD-ROMs, mcd.inc), the OnSpec 90c26
+; (on26.inc) and Freecom's Power and IQ (fc.inc).  QIC-117 floppy tape
+; drives on the floppy controller (/F) and the Iomega Ditto behind its
+; BackPack become SCSI tape drives (qic.inc, the Reed-Solomon code in
+; qicecc.inc): reading, writing and formatting QIC-80, QIC-3010/3020 and
+; Ditto cartridges.  It works alone or together with other ASPI managers:
+; it chains to a manager loaded before it, and managers loaded after it
+; can chain to it.
 ;
 ; The ASPI layer is taken from EUSBASPI.SYS; its author licenses it for
 ; PORTASPI under the GPL version 2 as well.  The PPA protocol follows
@@ -41,7 +47,7 @@
 
 %include "aspi.inc"
 
-%define VERSION_STR '0.5'
+%define VERSION_STR '0.6'
 
 STACK_SIZE      equ     0800h           ; BIOS IRQ handlers run on it too
 NTARGET         equ     7               ; SCSI IDs 0..6, the adapter is 7

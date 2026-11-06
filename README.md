@@ -1,7 +1,7 @@
 # PORTASPI - ASPI manager for parallel port and floppy controller devices
 
 **Status: ZIP drives, LS-120, BackPack CD-ROM and floppy drive, OnSpec, EPAT, EPIA, BackPack and Freecom; floppy tape reading, writing and formatting.**
-`PORTASPI.SYS` 0.5
+`PORTASPI.SYS` 0.6
 drives Iomega's parallel port ZIP drives in nibble, PS/2 and EPP mode: the
 ZIP 100 (PPA chip) and the ZIP Plus and ZIP 250 (IMM chip). It also drives
 ATAPI drives behind two bridges: the Shuttle EPAT, as in the parallel port
