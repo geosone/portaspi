@@ -14,6 +14,9 @@
 # DITTO=1: an Iomega Ditto 2GB on LPT1 instead (86Box's lpt_ditto.c, the
 # drive and its 765 behind a BackPack) with the same cartridge; PORTASPI
 # finds it without /F.
+# FORMAT=qic3010 or qic3020 (with DITTO=1): an Iomega QIC-3020 drive on
+# LPT1 with a QIC-3010 or QIC-3020 cartridge in format code 6; the third
+# volume starts near the end of track 0, a whole segment is bad.
 # Needs 86Box master of 2026-11-05 or later (86Box/86Box#8748: before it
 # the emulator crashed when the tape started to stream).
 set -euo pipefail
@@ -25,6 +28,17 @@ ROMDIR=${ROMDIR:-$HOME/.local/share/86Box/roms}
 MGR=${MGR:-$ROOT/build/PORTASPI.SYS}
 MGROPT=${MGROPT:-}
 TAPE=${TAPE:-}
+FORMAT=${FORMAT:-qic80}
+case $FORMAT in
+    qic80) MEDIUM=14 SPT=150 ;;     # 86Box tape_types[]: QIC-80, DC-2120
+    qic3010) MEDIUM=17 SPT=215 ;;
+    qic3020) MEDIUM=18 SPT=422 ;;
+    *) echo "FORMAT: qic80, qic3010 or qic3020" >&2; exit 1 ;;
+esac
+if [ "$FORMAT" != qic80 ] && [ "${DITTO:-0}" != 1 ]; then
+    echo "FORMAT=$FORMAT needs DITTO=1 (fdd_tape.c is a QIC-80 drive)" >&2
+    exit 1
+fi
 OUT=${OUT:-$ROOT/build/86box-qic}
 test -x "$BOX"
 test -d "$ROMDIR"
@@ -50,8 +64,17 @@ else
     head -c 5000 /dev/urandom > "$OUT/vol1.bin"
     head -c 4600000 /dev/urandom > "$OUT/vol2.bin"
     VOLS=("$OUT/vol0.bin" "$OUT/vol1.bin" "$OUT/vol2.bin")
-    python3 -I "$ROOT/tests/qictape.py" "$OUT/tape.img" --bad 4:5 \
-        --damage 3:10 --damage 4:30 --damage 20:0 --damage 151:31 "${VOLS[@]}"
+    if [ "$FORMAT" = qic80 ]; then
+        python3 -I "$ROOT/tests/qictape.py" "$OUT/tape.img" --bad 4:5 \
+            --damage 3:10 --damage 4:30 --damage 20:0 --damage 151:31 \
+            "${VOLS[@]}"
+    else
+        L=$((SPT - 8))
+        python3 -I "$ROOT/tests/qictape.py" "$OUT/tape.img" \
+            --format "$FORMAT" --bad 4:5 --bad 6:'*' --last-at $L \
+            --damage 3:10 --damage 4:30 --damage 20:0 \
+            --damage $((SPT + 1)):31 "${VOLS[@]}"
+    fi
 fi
 python3 -I - "${VOLS[@]}" > "$OUT/expect.txt" <<'PY'
 import sys, zlib
@@ -73,8 +96,8 @@ if [ "${DITTO:-0}" = 1 ]; then
     cat >> "$OUT/86box.cfg" <<CFG
 
 [Other removable devices]
-tape_01_parameters = 5, lpt
-tape_01_medium_type = 12
+tape_01_parameters = $([ "$FORMAT" = qic80 ] && echo 5 || echo 7), lpt
+tape_01_medium_type = $MEDIUM
 tape_01_lpt_port = 0
 tape_01_image_path = tape.img
 CFG
@@ -84,7 +107,7 @@ else
 
 [Other removable devices]
 tape_01_parameters = 4, fdc
-tape_01_medium_type = 12
+tape_01_medium_type = $MEDIUM
 tape_01_fdd_unit = ${UNIT:-1}
 tape_01_image_path = tape.img
 CFG

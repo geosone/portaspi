@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
-"""Make a QIC-80 cartridge image (DC-2120, 307.5 ft) for 86Box's floppy
-tape drive, with volumes in it, the way the QIC-80 / QIC-113 volume
-format lays them out:
+"""Make a floppy tape cartridge image for 86Box's floppy tape drives, with
+volumes in it, the way the QIC-80 / QIC-113 volume format lays them out:
 
-  segment 0, 1   the header segment and its copy: format code 2, the
-                 geometry, the bad sector map (a 4 byte sector mask a
-                 segment from offset 2048)
+  segment 0, 1   the header segment and its copy: the format code, the
+                 geometry, the bad sector map
   segment 2      the volume table: a 128 byte "VTBL" entry a volume
   segment 3 ...  the volumes' data, one after the other
+
+--format picks the cartridge:
+  qic80    QIC-80 DC-2120 (307.5 ft), 28 tracks of 150 segments, format
+           code 2: the bad sector map a 4 byte sector mask a segment from
+           offset 2048, the volume table's segments in two bytes
+  qic3010  QIC-3010, 40 tracks of 215 segments, and
+  qic3020  QIC-3020, 40 tracks of 422 segments, both format code 6 as
+           86Box's lpt_ditto.c lays them down: the header's segment
+           numbers in four bytes at 234, the bad sector map a sorted list
+           of three byte sector numbers from offset 256 (bit 23: the whole
+           segment), the volume table in the QIC-113 rev. G layout (start
+           and end segment at 76 and 80)
 
 A segment is 32 sectors of 1024 bytes; its last three good sectors carry
 the Reed-Solomon parity of each byte column (GF(256), x^8+x^7+x^2+x+1,
@@ -18,8 +28,13 @@ roots a^-1, 1, a).  Bad sectors are skipped.  The image is the tape as
 written, as a sector that reads back wrong without a CRC error: the
 reader must put it right from the parity.
 
-Usage: qictape.py IMAGE [--bad SEG:SECTOR ...] [--damage SEG:SECTOR ...]
-                  [--label TEXT] FILE...
+--bad SEG:* marks the whole segment bad (format code 6 only).
+--last-at SEG starts the last volume at segment SEG, leaving the ones
+before it unused: a volume across the end of a long track.
+
+Usage: qictape.py IMAGE [--format F] [--bad SEG:SECTOR ...]
+                  [--damage SEG:SECTOR ...] [--last-at SEG] [--label TEXT]
+                  FILE...
        qictape.py --list IMAGE
 """
 
@@ -30,10 +45,18 @@ import sys
 SECTOR = 1024
 SECTORS = 32
 SEGMENT = SECTOR * SECTORS
-TRACKS = 28
-SPT = 150
+FORMATS = {"qic80": (28, 150, 2), "qic3010": (40, 215, 6),
+           "qic3020": (40, 422, 6)}
+TRACKS, SPT, FMT = FORMATS["qic80"]
 SEGMENTS = TRACKS * SPT
-FILL = 0x6B
+SEGS_PER_HEAD = 600                             # 150 cylinders of 4
+ALL = 0xFFFFFFFF
+
+
+def set_format(name):
+    global TRACKS, SPT, FMT, SEGMENTS
+    TRACKS, SPT, FMT = FORMATS[name]
+    SEGMENTS = TRACKS * SPT
 
 # GF(256) with x^8+x^7+x^2+x+1
 EXP = [0] * 512
@@ -105,23 +128,44 @@ def put_segment(img, bad, seg, data):
 def header(bad, label):
     h = bytearray(29 * SECTOR)
     struct.pack_into("<I", h, 0, 0xAA55AA55)
-    h[4] = 2                                    # QIC-80, 205/307.5 ft
-    struct.pack_into("<HHHH", h, 6, 0, 1, 2, SEGMENTS - 1)
+    h[4] = FMT
+    if FMT == 6:
+        struct.pack_into("<IIII", h, 234, 0, 1, 2, SEGMENTS - 1)
+    else:
+        struct.pack_into("<HHHH", h, 6, 0, 1, 2, SEGMENTS - 1)
     struct.pack_into("<H", h, 24, SPT)
     h[26] = TRACKS
-    h[27] = SEGMENTS // 600                     # max floppy side
-    h[28] = 149                                 # max floppy track
+    h[27] = (SEGMENTS - 1) // SEGS_PER_HEAD     # max floppy side
+    h[28] = SEGS_PER_HEAD // 4 - 1              # max floppy track
     h[29] = 128                                 # max floppy sector
     h[30:74] = label.encode("ascii")[:44].ljust(44)
-    for seg, mask in bad.items():
-        struct.pack_into("<I", h, 2048 + 4 * seg, mask)
+    if FMT == 6:
+        off = 256
+        for seg in sorted(bad):
+            mask = bad[seg]
+            if mask == ALL:
+                ents = [0x800000 | (seg * SECTORS + 1)]
+            else:
+                ents = [seg * SECTORS + s + 1 for s in range(SECTORS)
+                        if mask & (1 << s)]
+            for e in ents:
+                h[off:off + 3] = struct.pack("<I", e)[:3]
+                off += 3
+    else:
+        for seg, mask in bad.items():
+            struct.pack_into("<I", h, 2048 + 4 * seg, mask)
     return bytes(h)
 
 
 def vtbl_entry(start, end, size, desc):
     e = bytearray(128)
     e[0:4] = b"VTBL"
-    struct.pack_into("<HH", e, 4, start, end)
+    if FMT == 6:
+        struct.pack_into("<I", e, 4, end - start + 1)
+        struct.pack_into("<HH", e, 58, 113, 7)  # QIC-113 rev. G
+        struct.pack_into("<II", e, 76, start, end)
+    else:
+        struct.pack_into("<HH", e, 4, start, end)
     e[8:52] = desc.encode("ascii")[:44].ljust(44)
     struct.pack_into("<Q", e, 96, size)
     return bytes(e)
@@ -138,15 +182,18 @@ def damage(path, spots):
             img.write(data)
 
 
-def make(path, files, bad, label):
+def make(path, files, bad, label, last_at=None):
     with open(path, "wb") as img:
         img.truncate(SEGMENTS * SEGMENT)
         put_segment(img, bad, 0, header(bad, label))
         put_segment(img, bad, 1, header(bad, label))
         seg = 3
         table = b""
-        for name in files:
+        for i, name in enumerate(files):
             data = open(name, "rb").read()
+            if last_at is not None and i == len(files) - 1:
+                assert last_at >= seg, "--last-at before the volumes"
+                seg = last_at
             start = seg
             off = 0
             while True:
@@ -165,11 +212,25 @@ def make(path, files, bad, label):
 def listing(path):
     with open(path, "rb") as img:
         hdr = img.read(SEGMENT)
+        if hdr[4] == 6:
+            set_format("qic3020" if struct.unpack_from("<H", hdr, 24)[0]
+                       == 422 else "qic3010")
         bad = {}
-        for seg in range(SEGMENTS):
-            mask = struct.unpack_from("<I", hdr, 2048 + 4 * seg)[0]
-            if mask:
-                bad[seg] = mask
+        if FMT == 6:
+            off = 256
+            while True:
+                e = int.from_bytes(hdr[off:off + 3], "little")
+                if not e:
+                    break
+                seg, sec = divmod((e & 0x7FFFFF) - 1, SECTORS)
+                bad[seg] = ALL if e & 0x800000 else \
+                    bad.get(seg, 0) | (1 << sec)
+                off += 3
+        else:
+            for seg in range(SEGMENTS):
+                mask = struct.unpack_from("<I", hdr, 2048 + 4 * seg)[0]
+                if mask:
+                    bad[seg] = mask
         img.seek(2 * SEGMENT)
         raw = img.read(SEGMENT)
         good = good_sectors(bad, 2)
@@ -178,7 +239,10 @@ def listing(path):
             e = vt[i:i + 128]
             if e[:4] != b"VTBL":
                 break
-            start, end = struct.unpack_from("<HH", e, 4)
+            if FMT == 6:
+                start, end = struct.unpack_from("<II", e, 76)
+            else:
+                start, end = struct.unpack_from("<HH", e, 4)
             size = struct.unpack_from("<Q", e, 96)[0]
             print(start, end, size, e[8:52].decode("ascii").rstrip())
 
@@ -191,17 +255,27 @@ def main():
                    help="SEG:SECTOR, a bad sector (sector 0-31)")
     p.add_argument("--damage", action="append", default=[],
                    help="SEG:SECTOR, a good sector to damage after the parity")
+    p.add_argument("--format", choices=sorted(FORMATS), default="qic80")
+    p.add_argument("--last-at", type=int,
+                   help="the segment the last volume starts at")
     p.add_argument("--label", default="PORTASPI test tape")
     p.add_argument("--list", action="store_true")
     a = p.parse_args()
     if a.list:
         listing(a.image)
         return
+    set_format(a.format)
     bad = {}
     for b in a.bad:
-        seg, sec = (int(v) for v in b.split(":"))
-        bad[seg] = bad.get(seg, 0) | (1 << sec)
-    make(a.image, a.files, bad, a.label)
+        seg, sec = b.split(":")
+        seg = int(seg)
+        if sec == "*":
+            if FMT != 6:
+                p.error("a whole bad segment needs format code 6")
+            bad[seg] = ALL
+        else:
+            bad[seg] = bad.get(seg, 0) | (1 << int(sec))
+    make(a.image, a.files, bad, a.label, a.last_at)
     damage(a.image, [tuple(int(v) for v in d.split(":")) for d in a.damage])
 
 

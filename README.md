@@ -23,7 +23,8 @@ READ CAPACITY and READ TOC from the drive's disc information (the first
 track and the lead-out only). With `/F` a QIC-117 floppy tape drive on the
 floppy controller becomes a SCSI tape drive for reading: each volume of a
 QIC-80 cartridge (the volume table of QIC-80/QIC-113) is a tape file,
-read with READ (6) of variable blocks, with filemarks between them. The
+read with READ (6) of variable blocks, with filemarks between them;
+QIC-3010 and QIC-3020 cartridges too (format code 6). The
 Iomega Ditto on the parallel port, the same drive and a 765 behind a
 BackPack, is read the same way; PORTASPI finds it without `/F`.
 Everything else below is still the plan.
@@ -69,14 +70,16 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
 - `/F:` also a floppy tape drive (QIC-117) on drive select line 0 to 3
   (default 1, the B: line) of the floppy controller at 3F0h. It gets the
   first free SCSI ID; PORTASPI then installs even without a parallel port
-  drive. The tape is read in the QIC-80 volume format: the header segment
-  with the bad sector map, the volume table, the volumes' segments with
+  drive. The tape is read in the QIC-80 volume format (format codes 2 to
+  6, that is QIC-80 and its long tapes, QIC-3010 and QIC-3020; tested are
+  2 and 6): the header segment with the bad sector map, the volume table, the volumes' segments with
   their three ECC sectors left out. A sector that reads back wrong is put
   right from the segment's Reed-Solomon parity (one a segment); sectors
   the controller cannot read at all (CRC errors) are not corrected yet.
   REWIND, SPACE over filemarks and to the end of data, READ BLOCK LIMITS,
   MODE SENSE and LOAD/UNLOAD are there; writing and formatting are not
-  yet. While it reads PORTASPI takes IRQ 6 and DMA channel 2, and keeps the
+  yet. The controller runs at 500 kbit/s; the faster rates of QIC-3010
+  and QIC-3020 drives (1 and 2 Mbit/s) are not selected yet. While it reads PORTASPI takes IRQ 6 and DMA channel 2, and keeps the
   BIOS from turning the floppy motors off under it; the resident part grows
   by the 32 KB segment buffer.
 - An Iomega Ditto on the port is found with the BackPack units: a pod
@@ -157,7 +160,10 @@ reads again; the host compares. `TAPE=` takes another cartridge image.
 `DITTO=1` puts the cartridge into an Iomega Ditto 2GB on LPT1 instead
 (86Box's `lpt_ditto.c`; its log of every port access is on in master,
 which makes the run take hours, so the test is meant for a build with it
-off).
+off). `FORMAT=qic3010` or `qic3020` with `DITTO=1` takes 86Box's Iomega
+QIC-3020 drive and a cartridge of that standard in format code 6, with a
+whole bad segment and the third volume from near the end of track 0 into
+track 1.
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.
