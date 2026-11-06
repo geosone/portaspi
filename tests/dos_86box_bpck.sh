@@ -20,6 +20,9 @@
 # BRIDGE=bpmcd: the first BackPack CD-ROMs (160550, 162550), a Mitsumi
 # FX001 drive behind the BackPack (86Box's lpt_bpmcd), through PORTASPI or
 # with ORIG= Micro Solutions' BPCDDRV.SYS 1.06 and MSCDEX=.
+# BRIDGE=mcd: no parallel port drive but Mitsumi's own ISA interface
+# (86Box's cdrom_interface mcd, an FX001D at MCDBASE, default 300h),
+# through PORTASPI /C:MCD,base.
 # BPUNIT: the BackPack's chain address (unit), default 7.
 # SWAP=1: then a second CD goes in; the redirector must see the change and
 # read a file only that CD has.
@@ -37,6 +40,7 @@ ORIGDEV=${ORIGDEV:-BPCDDRV\$}
 MSCDEX=${MSCDEX:-}
 BRIDGE=${BRIDGE:-bpck}
 BPUNIT=${BPUNIT:-}
+MCDBASE=${MCDBASE:-300}
 SWAP=${SWAP:-}
 OUT=${OUT:-$ROOT/build/86box-bpck}
 test -x "$BOX"
@@ -72,6 +76,13 @@ if [ "$BRIDGE" = bpmcd ]; then
         -e '/^cdrom_01_lpt_port = 0$/d' \
         -e 's/^lpt1_enabled = 1$/&\nlpt1_device = bpmcd/' "$OUT/86box.cfg"
     grep -q '^lpt1_device = bpmcd$' "$OUT/86box.cfg"
+elif [ "$BRIDGE" = mcd ]; then
+    sed -i -e 's/^cdrom_01_parameters = 1, lpt$/cdrom_01_parameters = 1, mitsumi/' \
+        -e '/^cdrom_01_lpt_port = 0$/d' \
+        -e 's/^lpt1_enabled = 1$/lpt1_enabled = 0/' "$OUT/86box.cfg"
+    printf '\n[Storage controllers]\ncdrom_interface = mcd\n\n[Mitsumi interface]\nbase = %04X\n' \
+        "0x$MCDBASE" >> "$OUT/86box.cfg"
+    MGROPT="$MGROPT /C:MCD,$MCDBASE"
 elif [ "$BRIDGE" != bpck ]; then
     sed -i "s/^cdrom_01_lpt_port = 0$/&\ncdrom_01_lpt_bridge = $BRIDGE/" "$OUT/86box.cfg"
     grep -q "^cdrom_01_lpt_bridge = $BRIDGE$" "$OUT/86box.cfg"
@@ -87,6 +98,7 @@ case "$BRIDGE" in
     frpw) NAME="Freecom Power" ;;
     friq) NAME="Freecom IQ" ;;
     bpmcd) NAME="BackPack (Mitsumi)" ;;
+    mcd) NAME="Mitsumi ISA" ;;
     *) NAME="BackPack" ;;
 esac
 DRV=PORTASPI

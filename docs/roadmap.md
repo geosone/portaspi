@@ -57,6 +57,10 @@
    formatting (format code 6 instead, which it reads).
 5. **Optional**: the floppy drive as a SCSI disk; proprietary CD-ROM
    interfaces; further buses from [devices](devices.md#further-ideas-of-the-same-kind).
+   **The Mitsumi interface is done** (`/C:MCD,base`, tested with 86Box's
+   ISA model and an FX001D, disc change too). 86Box also emulates the
+   Panasonic/MKE (Creative), Sony CDU-31A, Philips CM250 and CM-153 and
+   Hitachi interfaces, the candidates after it.
 
 ## Testing
 

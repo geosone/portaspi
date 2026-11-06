@@ -1,15 +1,18 @@
 ;=============================================================================
-; mcd.inc - SCSI commands on the Mitsumi CD-ROM drive of the first Micro
-; Solutions BackPack CD-ROMs (160550, 162550): a Mitsumi FX001 or FX001D
-; behind the BackPack link
+; mcd.inc - SCSI commands on a Mitsumi CD-ROM drive (FX001, FX001D): the
+; one of the first Micro Solutions BackPack CD-ROMs (160550, 162550),
+; behind the BackPack link, or one on Mitsumi's own ISA interface (/C:MCD)
 ;
-; Register 40h of the pod is the drive's command and data register, 41h
-; its flags: bit 2 clear when a status byte waits, bit 1 clear when data
-; waits; a write to it resets the drive.  The way Grant Guenther's Linux
-; bpmcd.c uses it: a command, its parameters, then wait until a flag
-; drops; a sector read takes the 2048 bytes and then the status.
+; Register 40h of the pod (port base+0 of the ISA interface) is the
+; drive's command and data register, 41h (base+1) its flags: bit 2 clear
+; when a status byte waits, bit 1 clear when data waits; a write to it
+; resets the drive.  The way Grant Guenther's Linux bpmcd.c (and mcd.c on
+; ISA) uses it: a command, its parameters, then wait until a flag drops;
+; a sector read takes the 2048 bytes and then the status.  On ISA it is
+; polled: no IRQ, no DMA.
 ;
-; The drive is offered as SCSI ID 0, a CD-ROM drive:
+; The drive is offered as a CD-ROM drive, SCSI ID 0 behind the pod, the
+; first free one on ISA:
 ;   TEST UNIT READY                      the drive's status
 ;   INQUIRY                              "MITSUMI CRMC-FX001(D)"
 ;   READ CAPACITY                        the lead-out of the disc
@@ -44,6 +47,9 @@ MC_ST_OPEN      equ     80h
 MC_SECTOR       equ     2048
 
 dev_mcd         db      0               ; the drive is the pod's Mitsumi
+mc_isa          db      0               ; this command: the ISA drive
+cd_id           db      0FFh            ; SCSI ID of the ISA drive, 0FFh: none
+cd_base         dw      0               ; its port, /C:MCD,base
 mc_speed        db      0               ; 1 for an FX001D (double speed)
 mc_ua           db      0               ; this change was reported
 mc_sns          dd      0               ; sense of the last command
@@ -71,9 +77,11 @@ mcd_exec:
         call    norm_buf
         mov     dx, [lpt_base]
         mov     al, XR_NOSEL
-        cmp     byte [x_target], 0      ; drive 0 only
+        cmp     byte [mc_isa], 0        ; the pod: drive 0 only
+        jne     .tgt
+        cmp     byte [x_target], 0
         jne     .out
-        mov     al, [cdb_buf]
+.tgt:        mov     al, [cdb_buf]
         cmp     al, SCSI_REQUEST_SENSE
         je      .rsense
         mov     dword [mc_sns], 0       ; a new command clears the sense
@@ -81,7 +89,7 @@ mcd_exec:
         je      .inquiry
 
         ; everything else asks the drive first
-        call    bpck_connect
+        call    mc_connect
         call    mc_ready
         jc      .sense_d
         mov     al, [cdb_buf]
@@ -124,14 +132,17 @@ mcd_exec:
         cmp     byte [mc_speed], 0
         je      .inq
         mov     byte [ata_reply+26], 'D'
-.inq:   mov     si, ata_reply
+.inq:   cmp     byte [mc_isa], 0
+        je      .inqp
+        mov     dword [ata_reply+32], 'ISA '
+.inqp:   mov     si, ata_reply
         mov     cx, 36
         call    ata_give
         jmp     .good
 
 .rcap:  call    mc_disc_info
         jc      .sense_d
-        call    bpck_disconnect
+        call    mc_disconnect
         mov     si, mc_info+2           ; the lead-out
         call    mc_msf_lba
         dec     eax                     ; the last block
@@ -145,7 +156,7 @@ mcd_exec:
 
 .toc:   call    mc_disc_info
         jc      .sense_d
-        call    bpck_disconnect
+        call    mc_disconnect
         test    byte [cdb_buf+2], 0Fh   ; format 0 only
         jnz     .badfield
         test    byte [cdb_buf+9], 0C0h
@@ -206,14 +217,14 @@ mcd_exec:
         mov     eax, SNS_BAD_FIELD
         jmp     .sense
 .sense_d:
-        call    bpck_disconnect
+        call    mc_disconnect
 .sense: mov     [mc_sns], eax
         shl     al, 4
         mov     [x_err], al
         mov     byte [x_status], STATUS_CHKCOND
         jmp     .good
 .good_d:
-        call    bpck_disconnect
+        call    mc_disconnect
 .good:  mov     al, XR_OK
 .out:   pop     es
         pop     di
@@ -229,8 +240,55 @@ mc_inquiry      db      05h, 80h, 02h, 02h, 31, 0, 0, 0
                 db      'BPCK'
 
 ;-----------------------------------------------------------------------------
-; The drive, through the pod (connected, DX = base)
+; The drive, through the pod (connected, DX = base) or on its ISA ports
 ;-----------------------------------------------------------------------------
+
+; register AH (40h data, 41h flags) -> AL
+mc_rd:  cmp     byte [mc_isa], 0
+        je      bpck_rd
+        push    dx
+        mov     dx, [cd_base]
+        test    ah, 1
+        jz      .in
+        inc     dx
+.in:    in      al, dx
+        pop     dx
+        ret
+
+; AL to register AH
+mc_wr:  cmp     byte [mc_isa], 0
+        je      bpck_wr
+        push    dx
+        mov     dx, [cd_base]
+        test    ah, 1
+        jz      .out
+        inc     dx
+.out:   out     dx, al
+        pop     dx
+        ret
+
+; CX data bytes to ES:DI
+mc_sget:
+        cmp     byte [mc_isa], 0
+        jne     .isa
+        mov     al, MC_REG_DATA
+        jmp     bk_sget
+.isa:   push    dx
+        mov     dx, [cd_base]
+        cld
+        rep     insb
+        pop     dx
+        ret
+
+mc_connect:
+        cmp     byte [mc_isa], 0
+        je      bpck_connect
+        ret
+
+mc_disconnect:
+        cmp     byte [mc_isa], 0
+        je      bpck_disconnect
+        ret
 
 ; wait until the drive has a status byte or data for us, EBX ticks.
 ; -> AL = the flags.  CF on timeout.
@@ -241,7 +299,7 @@ mc_wait:
         call    get_ticks
         mov     esi, eax
 .l:     mov     ah, MC_REG_FLAGS
-        call    bpck_rd
+        call    mc_rd
         and     al, MC_FL_NOSTAT | MC_FL_NODATA
         cmp     al, MC_FL_NOSTAT | MC_FL_NODATA
         jne     .ok
@@ -267,14 +325,14 @@ mc_byte:
         stc
         jnz     .o
         mov     ah, MC_REG_DATA
-        call    bpck_rd
+        call    mc_rd
         clc
 .o:     pop     ebx
         ret
 
 ; AL = a command or parameter byte for the drive
 mc_out: mov     ah, MC_REG_DATA
-        jmp     bpck_wr
+        jmp     mc_wr
 
 ; the drive's status -> AL.  CF if it does not answer.
 mc_status:
@@ -401,8 +459,7 @@ mc_read:
         jnz     .status                 ; a status first: the read failed
         les     di, [x_buf]
         mov     cx, MC_SECTOR
-        mov     al, MC_REG_DATA
-        call    bk_sget
+        call    mc_sget
 .status:
         call    mc_byte
         jc      .lost
@@ -488,16 +545,16 @@ mcd_probe:
         push    ebx
         push    cx
         mov     ax, (MC_REG_FLAGS << 8) | 0     ; reset the drive
-        call    bpck_wr
+        call    mc_wr
         mov     ebx, 2                  ; let it come up
         call    fd_sleep
         mov     cx, 16                  ; what it may still tell
 .drain: mov     ah, MC_REG_FLAGS
-        call    bpck_rd
+        call    mc_rd
         test    al, MC_FL_NOSTAT
         jnz     .st
         mov     ah, MC_REG_DATA
-        call    bpck_rd
+        call    mc_rd
         loop    .drain
 .st:    call    mc_status
         jc      .no

@@ -203,8 +203,14 @@ norm_buf:
 ;-----------------------------------------------------------------------------
 dev_exec:
         push    ax
+        mov     byte [mc_isa], 0
         mov     al, [x_target]
-        cmp     al, [qt_id]             ; the floppy tape
+        cmp     al, [cd_id]             ; the CD-ROM drive on ISA
+        jne     .nocd
+        mov     byte [mc_isa], 1
+        pop     ax
+        jmp     mcd_exec
+.nocd:  cmp     al, [qt_id]             ; the floppy tape
         pop     ax
         je      qic_exec
         cmp     byte [dev_fdd], 0       ; the BackPack's floppy drive

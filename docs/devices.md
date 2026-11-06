@@ -76,7 +76,8 @@ ASPI manager in the same spirit; each could be a back end of PORTASPI or a
 manager of its own:
 
 - **Proprietary CD-ROM interfaces**, mostly on sound cards: Mitsumi
-  (`mcd`, `mcdx`), Sony CDU-31A/33A (`cdu31a`) and CDU-535 (`sonycd535`),
+  (`mcd`, `mcdx`; **done**: `/C:MCD`, the protocol of `mcd.inc` that the
+  first BackPack CD-ROMs use too), Sony CDU-31A/33A (`cdu31a`) and CDU-535 (`sonycd535`),
   Panasonic/Matsushita on Creative cards (`sbpcd`), Aztech (`aztcd`),
   Goldstar (`gscd`), Philips CM206 (`cm206`), Optics Storage (`optcd`),
   Sanyo (`sjcd`), ISP16 interface (`isp16`); all in `drivers/cdrom/` of

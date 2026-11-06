@@ -12,7 +12,8 @@
 ; drives on the floppy controller (/F) and the Iomega Ditto behind its
 ; BackPack become SCSI tape drives (qic.inc, the Reed-Solomon code in
 ; qicecc.inc): reading, writing and formatting QIC-80, QIC-3010/3020 and
-; Ditto cartridges.  It works alone or together with other ASPI managers:
+; Ditto cartridges.  A Mitsumi CD-ROM drive on Mitsumi's ISA interface
+; (/C:MCD) is a SCSI CD-ROM drive too (mcd.inc).  It works alone or together with other ASPI managers:
 ; it chains to a manager loaded before it, and managers loaded after it
 ; can chain to it.
 ;
@@ -24,8 +25,8 @@
 ; Build:  nasm -f bin -Isrc/ -o PORTASPI.SYS src/portaspi.asm
 ;
 ; CONFIG.SYS:
-;   DEVICE=PORTASPI.SYS [/P:addr] [/M:NIBBLE|PS2|EPP] [/F[:unit]] [/T:s]
-;                       [/ID:name] [/Q] [/V]
+;   DEVICE=PORTASPI.SYS [/P:addr] [/M:NIBBLE|PS2|EPP] [/F[:unit]]
+;                       [/C:MCD[,base]] [/T:s] [/ID:name] [/Q] [/V]
 ;
 ;   /P:addr  parallel port base address in hex (default: the LPT ports in
 ;            the BIOS data area, the first one with a drive)
@@ -33,6 +34,8 @@
 ;            (default: PS2 where the port is bidirectional, else NIBBLE)
 ;   /F:unit  also a floppy tape drive (QIC-117) on drive select line unit
 ;            (0-3, default 1) of the floppy controller at 3F0h (qic.inc)
+;   /C:MCD,base  also a CD-ROM drive on Mitsumi's own ISA interface at port
+;            base (hex, default 300h; mcd.inc)
 ;   /T:s     command timeout in seconds (default 15)
 ;   /ID:name ASPI manager id (default PORTASPI)
 ;   /Q       quiet, /V verbose
@@ -426,6 +429,8 @@ srb_exec:
         mov     al, [x_target]
         cmp     al, [qt_id]             ; the floppy tape
         je      .go
+        cmp     al, [cd_id]             ; the CD-ROM drive on ISA
+        je      .go
         cmp     byte [lpt_chip], CHIP_EPAT
         jb      .go
         cmp     byte [dev_ata], 0
@@ -608,6 +613,7 @@ opt_mode        db      0FFh            ; /M:, 0FFh: choose
 opt_quiet       db      0               ; /Q
 opt_verbose     db      0               ; /V
 opt_tape        db      0               ; /F: unit + 1
+opt_cd          db      0               ; /C: 1 Mitsumi
 res_end         dw      resident_end    ; and the tape's buffer
 inq_buf         times 36 db 0
 id_buf          times 512 db 0         ; IDENTIFY DEVICE data
@@ -617,6 +623,10 @@ msg_banner      db      'PORTASPI ', VERSION_STR
 msg_no386       db      'PORTASPI needs a 386 or better', 13, 10, 0
 msg_no_dev      db      'PORTASPI: no drive found on the parallel ports', 13, 10, 0
 msg_no_tape     db      'PORTASPI: no drive found on the parallel ports or the floppy controller', 13, 10, 0
+msg_cd          db      '  Mitsumi interface ', 0
+msg_cd2         db      'h: ', 0
+msg_no_cd       db      'PORTASPI: no Mitsumi CD-ROM drive at the /C: port', 13, 10, 0
+id_cd           db      'MCD ', 0
 msg_tape        db      '  floppy controller 3F0h, unit ', 0
 msg_tape2       db      ': QIC-117 tape', 13, 10, 0
 id_tape         db      'QIC FDC 03F0 u', 0
@@ -690,7 +700,11 @@ init:
         cmp     bx, 6
         jb      .next
 .nodev: call    tape_setup
-        jnc     .have
+        call    cd_setup
+        cmp     byte [qt_id], 0FFh
+        jne     .have
+        cmp     byte [cd_id], 0FFh
+        jne     .have
         mov     si, msg_no_dev
         cmp     byte [opt_tape], 0
         je      .nd
@@ -698,6 +712,7 @@ init:
 .nd:    jmp     init_fail
 
 .found: call    tape_setup
+        call    cd_setup
 .have:  cmp     byte [dev_fdd], 0       ; the floppy motor goes off on
         je      .notimer                ; the timer tick
         push    es
@@ -830,6 +845,83 @@ try_port:
         ret
 
 ;-----------------------------------------------------------------------------
+; With /C:MCD, the Mitsumi drive on its ISA interface: on the first free
+; SCSI ID.  CF if there is none (or no /C:).
+;-----------------------------------------------------------------------------
+cd_setup:
+        cmp     byte [opt_cd], 0
+        je      .none
+        cmp     byte [dev_mcd], 0       ; one Mitsumi drive: the pod's
+        jne     .none
+        xor     bx, bx
+        xor     dx, dx                  ; the drives found before
+.free:  cmp     byte [dev_type+bx], 0FFh
+        je      .id
+        inc     dx
+        inc     bx
+        cmp     bx, NTARGET
+        jb      .free
+        jmp     .none
+.id:    mov     byte [mc_isa], 1
+        call    mcd_probe
+        mov     byte [mc_isa], 0
+        jc      .nodrv
+        mov     [cd_id], bl
+        mov     byte [dev_type+bx], 5   ; CD-ROM
+        push    bx
+.cnt:   inc     bx                      ; drives after the free ID
+        cmp     bx, NTARGET
+        jae     .cnted
+        cmp     byte [dev_type+bx], 0FFh
+        je      .cnt
+        inc     dx
+        jmp     .cnt
+.cnted: pop     bx
+        or      dx, dx
+        jnz     .named
+        push    cs                      ; the host adapter is the drive's
+        pop     es
+        mov     di, ha_ident
+        mov     cx, 16
+        mov     al, ' '
+        rep     stosb
+        mov     di, ha_ident
+        mov     si, id_cd
+.idc:   lodsb
+        or      al, al
+        jz      .idp
+        stosb
+        jmp     .idc
+.idp:   mov     ax, [cd_base]
+        call    hex16_to
+.named: cmp     byte [opt_quiet], 0
+        jne     .ok
+        mov     si, msg_cd
+        call    print
+        mov     ax, [cd_base]
+        call    print_hex16
+        mov     si, msg_cd2
+        call    print
+        call    inquire
+        jc      .ok
+        mov     si, inq_buf+8
+        mov     cx, 28
+.c:     lodsb
+        cmp     al, ' '
+        jae     .p
+        mov     al, ' '
+.p:     call    putc
+        loop    .c
+        mov     si, msg_crlf
+        call    print
+.ok:    clc
+        ret
+.nodrv: mov     si, msg_no_cd
+        call    print
+.none:  stc
+        ret
+
+;-----------------------------------------------------------------------------
 ; With /F, the floppy tape drive: on the first free SCSI ID.  CF if there is
 ; none (or no /F).
 ;-----------------------------------------------------------------------------
@@ -933,6 +1025,23 @@ inquire:
 .fail:  stc
         ret
 
+; AX as four hex digits to ES:DI
+hex16_to:
+        push    cx
+        mov     cx, 4
+.hex:   rol     ax, 4
+        push    ax
+        and     al, 0Fh
+        add     al, '0'
+        cmp     al, '9'
+        jbe     .d
+        add     al, 7
+.d:     stosb
+        pop     ax
+        loop    .hex
+        pop     cx
+        ret
+
 ; the adapter name: "chip port mode", for example "EPAT 0378 nibble"
 set_ident:
         push    cs
@@ -952,17 +1061,7 @@ set_ident:
         jmp     .name
 .port:  inc     di
         mov     ax, [lpt_base]
-        mov     cx, 4
-.hex:   rol     ax, 4
-        push    ax
-        and     al, 0Fh
-        add     al, '0'
-        cmp     al, '9'
-        jbe     .d
-        add     al, 7
-.d:     stosb
-        pop     ax
-        loop    .hex
+        call    hex16_to
         inc     di
         mov     si, id_nibble
         cmp     byte [lpt_mode], MODE_PS2
@@ -1184,6 +1283,8 @@ parse_cmdline:
         je      .opt_i
         cmp     al, 'F'
         je      .opt_f
+        cmp     al, 'C'
+        je      .opt_c
 .bad:   push    si
         mov     si, msg_bad_opt
         call    print
@@ -1221,6 +1322,22 @@ parse_cmdline:
         ja      .bad
         inc     al
         mov     [opt_tape], al
+        jmp     .args
+.opt_c: call    get_colon
+        jc      .bad
+        mov     di, kw_mcd
+        call    match_kw
+        jc      .bad
+        mov     byte [opt_cd], 1
+        mov     word [cd_base], 300h
+        cmp     byte [es:si], ','
+        jne     .args
+        inc     si
+        call    get_hex
+        jc      .bad
+        or      ax, ax
+        jz      .bad
+        mov     [cd_base], ax
         jmp     .args
 .opt_q: mov     byte [opt_quiet], 1
         jmp     .args
@@ -1298,6 +1415,7 @@ match_kw:
 kw_nibble       db      'NIBBLE', 0
 kw_ps2          db      'PS2', 0
 kw_epp          db      'EPP', 0
+kw_mcd          db      'MCD', 0
 
 is_eol: cmp     al, 0
         je      .y

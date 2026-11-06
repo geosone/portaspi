@@ -20,7 +20,9 @@ go a track at a time through the pod's buffer. The first BackPack CD-ROMs
 (160550, 162550), a Mitsumi FX001 or FX001D behind the BackPack (nibble
 and PS/2 mode), become a SCSI CD-ROM drive: READ (10) a sector at a time,
 READ CAPACITY and READ TOC from the drive's disc information (the first
-track and the lead-out only). With `/F` a QIC-117 floppy tape drive on the
+track and the lead-out only); so does such a drive on Mitsumi's own ISA
+interface with `/C:MCD` (the proprietary CD-ROM interface of early
+CD-ROM kits and sound cards, polled at its two ports). With `/F` a QIC-117 floppy tape drive on the
 floppy controller becomes a SCSI tape drive: each volume of a
 QIC-80 cartridge (the volume table of QIC-80/QIC-113) is a tape file,
 read with READ (6) and written with WRITE (6) of variable blocks, with
@@ -61,7 +63,7 @@ ASPI manager loaded before it, so all of them can be used together.
 ## Use
 
 ```dos
-DEVICE=C:\OPENASPI\PORTASPI.SYS [/P:378] [/M:NIBBLE|PS2|EPP] [/F[:1]] [/T:15] [/ID:name] [/Q] [/V]
+DEVICE=C:\OPENASPI\PORTASPI.SYS [/P:378] [/M:NIBBLE|PS2|EPP] [/F[:1]] [/C:MCD[,300]] [/T:15] [/ID:name] [/Q] [/V]
 DEVICE=C:\OPENASPI\ASPIFDD.SYS
 ```
 
@@ -70,6 +72,11 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
 - `/M:` the port mode. By default it uses PS/2 when the port can read bytes
   (or has an ECR), else nibble mode. EPP is only used with `/M:EPP`.
 - `/T:` the command timeout in seconds (default 15).
+- `/C:MCD,base` also a CD-ROM drive on Mitsumi's ISA interface at port
+  base (hex, default 300h, as Linux's `mcd`): data at base, flags (and
+  reset) at base+1, polled, without IRQ or DMA. It gets the first free
+  SCSI ID; PORTASPI then installs without a parallel port drive too. A
+  Mitsumi drive behind a BackPack takes the place of this one.
 - `/F:` also a floppy tape drive (QIC-117) on drive select line 0 to 3
   (default 1, the B: line) of the floppy controller at 3F0h. It gets the
   first free SCSI ID; PORTASPI then installs even without a parallel port
@@ -162,6 +169,8 @@ own driver instead, as a black box against the 86Box model: version 4.02
 of 2002 passes, 2.13 of 1998 hangs at init). `BRIDGE=bpmcd` takes the
 Mitsumi BackPack CD-ROM instead (86Box with the `lpt_bpmcd` device), also
 with `ORIG=path/BPCDDRV.SYS` version 1.06 of 1994 and `MSCDEX=`.
+`BRIDGE=mcd` takes 86Box's Mitsumi ISA interface (`cdrom_interface = mcd`,
+an FX001D) at `MCDBASE=` (default 300) through `/C:MCD`.
 `tests/dos_86box_bpfdd.sh` takes the BackPack floppy drive with a 1.44 MB
 disk through `ASPIFDD.SYS` (`MGROPT=/M:NIBBLE` or `/M:PS2`), or with
 `ORIG=path/BACKPACK.SYS` through Micro Solutions' own driver; DOS reads a
