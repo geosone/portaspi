@@ -140,7 +140,12 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   `PPA 0378 PS/2` or `IMM 0378 EPP`. The drive keeps its SCSI ID (6 for
   the ZIP 100).
 
-Building needs NASM: `make` gives `build/PORTASPI.SYS`.
+Building needs NASM: `make` gives `build/PORTASPI.SYS`. `make package`
+puts together the setup package (`build/portaspi.zip` and the 1.44 MB disk
+`build/PORTASPI.IMG`): PORTASPI with OpenASPI's drivers, SHSUCDX and the
+GeosOne DOS Installer, from their build trees next to this one (`GDI=`,
+`OPENASPI=`, `SHSUCD=`); `make test-install` installs and removes it in
+QEMU (`tests/install.sh`).
 
 ## Testing
 
@@ -167,11 +172,11 @@ see the change and read it, and writes must fail with DOS error 00h.
 OpenASPI's `ASPIDSK.SYS` mounts its FAT16 partition, DOS reads and writes
 it and the host compares the files and checks the file system
 (`tests/dos_86box_on26.sh`, `LBA=0` for a CHS-only drive, `MB=` the size).
-86Box has no such device upstream; the model, `src/device/lpt_on26.c`, is
-on the `lpt-on26` branch of github.com/geosone/86Box, written from Linux's
-on26.c and the ATA standard. `BRIDGE=epat`, `BRIDGE=epia` and
+The model, `src/device/lpt_on26.c` in 86Box master (the hard disk bus
+LPT, 86Box/86Box#8712), is written from Linux's on26.c and the ATA
+standard. `BRIDGE=epat`, `BRIDGE=epia` and
 `BRIDGE=bpck` put the disk behind a Shuttle EPAT or EPIA or a BackPack
-instead (`lpt-epat-hdd` branch; the EPIA model is `src/device/lpt_epia.c`,
+instead (the EPIA model is `src/device/lpt_epia.c`,
 from Linux's epia.c). `BRIDGE=frpw` and `BRIDGE=friq` take Freecom's
 Power adapter or IQ cable (`src/device/lpt_freecom.c`, from Linux's frpw.c
 and friq.c); the CD-ROM test takes the same `BRIDGE=` (and `on26`,
@@ -234,12 +239,12 @@ old CD-ROM drivers. They are licensed GPL-2.0-only. So that their code can
 be taken over directly, PORTASPI is **GPL-2.0-only** as well (see
 [LICENSE](LICENSE)).
 
-OpenASPI, AHCIASPI and EUSBASPI are GPL version 3. That is no problem:
-PORTASPI is a separate program, and the drivers talk to it only through
-the ASPI interface, as with any third-party ASPI manager. Code is not moved
-between the GPLv2 and the GPLv3 projects, unless its authors license it for
-both. The ASPI layer of PORTASPI comes from EUSBASPI; its author licenses
-it for PORTASPI under the GPL version 2 as well.
+OpenASPI, AHCIASPI and EUSBASPI are GPL version 2 or (at your option)
+any later version, so their code can come into PORTASPI under version 2;
+code from PORTASPI does not go the other way unless its authors license it
+for both. PORTASPI is a separate program in any case: the drivers talk to
+it only through the ASPI interface, as with any third-party ASPI manager.
+The ASPI layer of PORTASPI comes from EUSBASPI.
 
 ## Testing and hardware wanted
 
@@ -252,8 +257,7 @@ emulates several of these devices, so much can be tested without hardware:
   QIC-3020; cartridges QIC-80, QIC-3010/3020, Travan TR-1 to TR-3, Ditto
   2 to 7 GB; `src/device/lpt_ditto.c`),
 - the Micro Solutions BackPack CD-ROM (BPCK protocol;
-  `src/device/lpt_bpck.c`) and, on the `lpt-bpck-link` branch of
-  github.com/geosone/86Box (86Box PR #8733), the BackPack floppy drive
+  `src/device/lpt_bpck.c`) and the BackPack floppy drive
   (`src/device/lpt_bpfdd.c`),
 - the Shuttle EPAT bridge with an Imation SuperDisk LS-120 (Imation's own
   DOS driver works on it; `src/device/lpt_epat.c`),

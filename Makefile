@@ -40,7 +40,33 @@ test-qic: build/PORTASPI.SYS
 test-opentape: build/PORTASPI.SYS
 	OPENASPI=$(OPENASPI) bash tests/dos_86box_opentape.sh
 
+# distribution: INSTALL.EXE comes from the GeosOne DOS Installer
+# (https://github.com/geosone/gdi), the OpenASPI drivers from
+# https://github.com/geosone/OpenAspi (make), SHSUCDX and CDAUDIO from
+# https://github.com/geosone/shsucd (install/mkpkg.sh)
+GDI ?= ../gdi/build/INSTALL.EXE
+OPENASPI_DOS ?= $(OPENASPI)/build/dos
+SHSUCD ?= ../shsucd/build/pkg
+PKG = build/pkg
+package: build/PORTASPI.SYS
+	rm -rf $(PKG) && mkdir -p $(PKG)
+	cp build/PORTASPI.SYS $(PKG)/
+	cd $(OPENASPI_DOS) && cp ASPICDA.SYS ASPIFDD.SYS ASPIDSK.SYS ASPITAP.SYS ASPISCAN.COM TAPECTL.COM $(abspath $(PKG))/
+	cd $(SHSUCD) && cp SHSUCDX.COM CDAUDIO.COM SHSUCD.LIC SHSUCD.TXT $(abspath $(PKG))/
+	sed 's/$$/\r/' install/INSTALL.INI > $(PKG)/INSTALL.INI
+	sed 's/$$/\r/' install/README.TXT > $(PKG)/README.TXT
+	sed 's/$$/\r/' LICENSE > $(PKG)/LICENSE.TXT
+	cp $(GDI) $(PKG)/INSTALL.EXE
+	sed 's/$$/\r/' $(dir $(GDI))../LICENSE > $(PKG)/GPL3.TXT
+	cd $(PKG) && rm -f ../portaspi.zip && zip -q -9 ../portaspi.zip *
+	# a 1.44 MB disk (mtools)
+	cd $(PKG) && rm -f ../PORTASPI.IMG && mformat -C -f 1440 -v PORTASPI -i ../PORTASPI.IMG :: && mcopy -i ../PORTASPI.IMG * ::
+
+# the setup package in QEMU: INSTALL /S and INSTALL /U (tests/install.sh)
+test-install: package
+	bash tests/install.sh
+
 clean:
 	rm -rf build
 
-.PHONY: all test test-ls120 test-bpck test-on26 test-qic test-opentape clean
+.PHONY: all test test-ls120 test-bpck test-on26 test-qic test-opentape package test-install clean
