@@ -77,8 +77,10 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   Ditto's; tested are 2, 4 and 6): the header segment with the bad sector
   map, the volume table, the volumes' segments with
   their three ECC sectors left out. A sector that reads back wrong is put
-  right from the segment's Reed-Solomon parity (one a segment); sectors
-  the controller cannot read at all (CRC errors) are not corrected yet.
+  right from the segment's Reed-Solomon parity (one a segment), and so are
+  up to three a segment that the controller cannot read at all (CRC
+  errors, erasures): the read goes on past them while the tape streams,
+  and a retry only fetches what is still missing.
   REWIND, SPACE over filemarks and to the end of data, READ BLOCK LIMITS,
   MODE SENSE and LOAD/UNLOAD are there; writing and formatting are not
   yet. The tape runs at 1 Mbit/s where the cartridge (not QIC-40), the
@@ -173,6 +175,11 @@ track 1. `FORMAT=ditto2gb` is the Ditto 2GB with its own cartridge (format
 code 4, the header scrambled as the Ditto writes it), `ditto5gb` and
 `dittomax7` the Ditto Max with cartridges of over 65535 segments, the
 third volume past segment 65535.
+`tests/dos_86box_qicecc.sh` runs the tape's Reed-Solomon code
+(`src/qicecc.inc`) on its own in DOS: `QICECC.COM` (`tests/qicecc.asm`)
+mends the segments `tests/qictape.py --ecc-vectors` writes, with one to
+three erasures (also in the parity sectors and in short segments), a
+damaged sector, and damage beyond the parity, which it must find.
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.

@@ -40,15 +40,21 @@ reader must put it right from the parity.
 --last-at SEG starts the last volume at segment SEG, leaving the ones
 before it unused: a volume across the end of a long track.
 
+--ecc-vectors VEC EXPECT writes test segments for tests/qicecc.asm
+instead (erasures, damage, both, too much) and the lines it must print.
+
 Usage: qictape.py IMAGE [--format F] [--bad SEG:SECTOR ...]
                   [--damage SEG:SECTOR ...] [--last-at SEG] [--label TEXT]
                   FILE...
        qictape.py --list IMAGE
+       qictape.py --ecc-vectors VEC EXPECT
 """
 
 import argparse
+import random
 import struct
 import sys
+import zlib
 
 SECTOR = 1024
 SECTORS = 32
@@ -185,6 +191,50 @@ def vtbl_entry(start, end, size, desc):
     return bytes(e)
 
 
+# n good sectors, erasures (places), sectors damaged without a CRC error,
+# whether the reader must put it right
+ECC_CASES = [
+    (32, [], [], True),
+    (32, [], [5], True),
+    (32, [0], [], True),
+    (32, [31], [], True),
+    (32, [3, 17], [], True),
+    (32, [29, 30], [], True),
+    (32, [0, 15, 31], [], True),
+    (32, [29, 30, 31], [], True),
+    (20, [1, 2, 19], [], True),
+    (4, [0, 1, 2], [], True),
+    (12, [11, 0], [], True),
+    (32, [7], [9], False),
+    (32, [4, 5], [20], False),
+    (32, [], [2, 6], False),
+]
+
+
+def ecc_vectors(vec, expect):
+    rnd = random.Random(117)
+    with open(vec, "wb") as v, open(expect, "w") as x:
+        for i, (n, era, dmg, ok) in enumerate(ECC_CASES):
+            secs = encode([bytes(rnd.randrange(256) for _ in range(SECTOR))
+                           for _ in range(n - 3)])
+            good = b"".join(secs)
+            bad = [bytearray(s) for s in secs]
+            for k, e in enumerate(era):         # garbage or nothing at all
+                bad[e] = bytearray(SECTOR) if k % 2 else \
+                    bytearray(rnd.randrange(256) for _ in range(SECTOR))
+            for d in dmg:
+                for col in range(0, SECTOR, 3):
+                    bad[d][col] ^= rnd.randrange(1, 256)
+            places = (era + [0, 0, 0])[:3]
+            v.write(bytes([n, len(era)] + places + [0, 0, 0]))
+            v.write(b"".join(bad))
+            if ok:
+                x.write("ECC %d 0 %08X\n" % (i, zlib.crc32(good)))
+            else:
+                x.write("ECC %d 1\n" % i)
+        x.write("QICECC DONE\n")
+
+
 def damage(path, spots):
     with open(path, "r+b") as img:
         for seg, sec in spots:
@@ -268,7 +318,7 @@ def listing(path):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("image")
+    p.add_argument("image", nargs="?")
     p.add_argument("files", nargs="*")
     p.add_argument("--bad", action="append", default=[],
                    help="SEG:SECTOR, a bad sector (sector 0-31)")
@@ -279,7 +329,11 @@ def main():
                    help="the segment the last volume starts at")
     p.add_argument("--label", default="PORTASPI test tape")
     p.add_argument("--list", action="store_true")
+    p.add_argument("--ecc-vectors", nargs=2, metavar=("VEC", "EXPECT"))
     a = p.parse_args()
+    if a.ecc_vectors:
+        ecc_vectors(*a.ecc_vectors)
+        return
     if a.list:
         listing(a.image)
         return

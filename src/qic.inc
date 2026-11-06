@@ -403,6 +403,7 @@ qt_tindex       dw      0
 qt_rseg         dd      0
 qt_tries        db      0
 qt_rmask        dd      0
+qt_rdone        dd      0               ; sectors in the buffer (or erased)
 qt_res          times 7 db 0            ; result bytes of a read or READ ID
 qt_idsec        db      0               ; READ ID: sector in the segment
 
@@ -946,25 +947,31 @@ qt_read_seg:
         inc     dword [qt_next]
         jmp     .done
 .read:  mov     byte [qt_tries], 3
+        mov     dword [qt_rdone], 0     ; a new try goes on where one ended
+        mov     byte [qt_nera], 0
 .again: mov     eax, [qt_rseg]
         call    qt_locate
         jc      .o
-        mov     di, [qt_buf]
         xor     bl, bl                  ; sector
 .run:   cmp     bl, 32
         jae     .read_ok
         movzx   ecx, bl
         bt      [qt_rmask], ecx
+        jc      .skip
+        bt      [qt_rdone], ecx
         jnc     .start
-        inc     bl
+.skip:  inc     bl
         jmp     .run
-.start: xor     bh, bh                  ; a run of good sectors
+.start: call    qt_secpos               ; DI: where it goes
+        xor     bh, bh                  ; a run of good sectors
 .ext:   mov     cl, bl
         add     cl, bh
         cmp     cl, 32
         jae     .go
         movzx   ecx, cl
         bt      [qt_rmask], ecx
+        jc      .go
+        bt      [qt_rdone], ecx
         jc      .go
         or      bh, bh                  ; not across a 64 KB DMA boundary
         jz      .grow
@@ -981,9 +988,7 @@ qt_read_seg:
         jmp     .ext
 .go:    call    qt_run
         jc      .err
-        movzx   ax, bh
-        shl     ax, 10
-        add     di, ax
+        call    qt_mark
         add     bl, bh
         jmp     .run
 .read_ok:
@@ -1002,7 +1007,25 @@ qt_read_seg:
         mov     [qt_bseg], eax
         clc
         jmp     .o
-.err:   cmp     al, 1                   ; not found: find the segment again
+.err:   cmp     al, 2                   ; a CRC error: the sectors before it
+        jne     .err1                   ; are in, it is an erasure
+        mov     bh, ah
+        call    qt_mark
+        add     bl, bh
+        cmp     byte [qt_nera], 3
+        jae     .rderr                  ; more than the parity can mend
+        call    qt_secpos
+        mov     ax, di
+        sub     ax, [qt_buf]
+        shr     ax, 10
+        movzx   si, byte [qt_nera]
+        mov     [qt_era+si], al
+        inc     byte [qt_nera]
+        mov     bh, 1
+        call    qt_mark
+        inc     bl
+        jmp     .run                    ; on with the next, while it streams
+.err1:  cmp     al, 1                   ; not found: find the segment again
         jne     .rderr
         call    qt_stop
         dec     byte [qt_tries]
@@ -1017,128 +1040,44 @@ qt_read_seg:
         pop     ebx
         ret
 
-;-----------------------------------------------------------------------------
-; The Reed-Solomon code of a segment
-;
-; Each byte column of a segment's n good sectors is a code word over
-; GF(256) (x^8+x^7+x^2+x+1) whose generator has the roots a^-1, 1 and a:
-; good sector i is the coefficient of x^(n-1-i), the last three carry the
-; parity.  The syndromes S-1, S0 and S1 of a whole column are zero.  One
-; damaged sector, the one the controller read without a CRC error but
-; wrong, gives in each column it touches the error e = S0 at X = S1 / S0
-; = a^(n-1-i), with S-1 = S0 / X; all columns must agree on i.  More
-; damage than that, or sectors the controller could not read at all, is
-; not corrected yet.
-;-----------------------------------------------------------------------------
-
-gf_log          times 256 db 0
-qt_epos         dw      0               ; the damaged sector, FFFFh: none yet
-
-qt_gf_init:
-        push    ax
-        push    bx
+; sector BL of the segment being read -> DI: its place in the buffer,
+; after the good sectors before it
+qt_secpos:
+        push    eax
         push    cx
-        xor     cl, cl                  ; i
-        mov     al, 1                   ; a^i
-.l:     movzx   bx, al
-        mov     [gf_log+bx], cl
-        shl     al, 1
+        mov     eax, [qt_rmask]
+        not     eax
+        mov     cl, bl
+        mov     di, [qt_buf]
+.l:     or      cl, cl
+        jz      .o
+        shr     eax, 1
         jnc     .n
-        xor     al, 87h
-.n:     inc     cl
-        cmp     cl, 255
-        jb      .l
-        pop     cx
-        pop     bx
-        pop     ax
+        add     di, 1024
+.n:     dec     cl
+        jmp     .l
+.o:     pop     cx
+        pop     eax
         ret
 
-; check, and correct, the segment in the buffer: [qt_bcap] / 1024 + 3
-; good sectors.  CF if it is damaged beyond that.
-qt_ecc: pushad
-        mov     bp, [qt_bcap]
-        shr     bp, 10
-        add     bp, 3                   ; n
-        xor     di, di                  ; quick: S0 of every column
-.q:     mov     si, [qt_buf]
-        add     si, di
-        mov     cx, bp
-        xor     eax, eax
-.qs:    xor     eax, [si]
-        add     si, 1024
-        loop    .qs
-        or      eax, eax
-        jnz     .full
-        add     di, 4
-        cmp     di, 1024
-        jb      .q
-        jmp     .ok
-.full:  mov     word [qt_epos], 0FFFFh
-        xor     di, di                  ; column
-.col:   mov     si, [qt_buf]
-        add     si, di
-        mov     cx, bp
-        xor     dx, dx                  ; DL = S0, DH = S1
-        xor     bl, bl                  ; BL = S-1
-.s:     mov     al, [si]
-        xor     dl, al
-        shl     dh, 1                   ; S1 * a
-        jnc     .a
-        xor     dh, 87h
-.a:     xor     dh, al
-        shr     bl, 1                   ; S-1 * a^-1
-        jnc     .b
-        xor     bl, 0C3h
-.b:     xor     bl, al
-        add     si, 1024
-        loop    .s
-        or      dl, dl
-        jnz     .err
-        or      dh, bl                  ; S0 zero: the others too
-        jnz     .bad
-        jmp     .next
-.err:   or      dh, dh
-        jz      .bad
-        or      bl, bl
-        jz      .bad
-        movzx   si, dl
-        movzx   ax, byte [gf_log+si]    ; log S0
-        movzx   si, dh
-        movzx   cx, byte [gf_log+si]    ; log X = log S1 - log S0
-        sub     cx, ax
-        jae     .x
-        add     cx, 255
-.x:     movzx   si, bl                  ; log S-1 + log X = log S0
-        movzx   si, byte [gf_log+si]
-        add     si, cx
-        cmp     si, 255
-        jb      .y
-        sub     si, 255
-.y:     cmp     si, ax
-        jne     .bad
-        mov     ax, bp                  ; i = n - 1 - log X
-        dec     ax
-        sub     ax, cx
-        jb      .bad
-        cmp     word [qt_epos], 0FFFFh
-        je      .first
-        cmp     [qt_epos], ax
-        jne     .bad
-.first: mov     [qt_epos], ax
-        shl     ax, 10                  ; e into the damaged byte
-        add     ax, di
-        add     ax, [qt_buf]
-        mov     si, ax
-        xor     [si], dl
-.next:  inc     di
-        cmp     di, 1024
-        jb      .col
-.ok:    popad
-        clc
+; sectors BL to BL + BH - 1 are done
+qt_mark:
+        push    ecx
+        push    dx
+        mov     dl, bl
+        mov     dh, bh
+.l:     or      dh, dh
+        jz      .o
+        movzx   ecx, dl
+        bts     [qt_rdone], ecx
+        inc     dl
+        dec     dh
+        jmp     .l
+.o:     pop     dx
+        pop     ecx
         ret
-.bad:   popad
-        stc
-        ret
+
+%include "qicecc.inc"
 
 ; get the tape streaming just before segment EAX.  CF and EAX = the sense.
 qt_locate:
@@ -1421,10 +1360,38 @@ qt_run:
         call    qt_out
         jc      .f
         call    qt_result
-        jc      .o
+        jc      .rerr
+        call    qt_podcopy
+        clc
+        jmp     .o
+.rerr:  cmp     al, 2                   ; a data error: in sector R
+        jne     .fs
+        mov     ah, [qt_res+5]
+        sub     ah, dl                  ; AH = the sectors before it
+        cmp     ah, bh
+        jb      .part
+        xor     ah, ah                  ; R outside the run: none of it
+.part:  push    bx
+        mov     bh, ah
+        call    qt_podcopy
+        pop     bx
+        mov     al, 2
+.fs:    stc
+        jmp     .o
+.f:     mov     al, 3
+.o:     pop     edx
+        pop     ecx
+        pop     bx
+        ret
+
+; the Ditto: BH sectors from its buffer to CS:DI, at the same offset
+qt_podcopy:
         cmp     byte [qt_bp], 0
         je      .o
-        push    es                      ; the Ditto: from its buffer
+        or      bh, bh
+        jz      .o
+        pushad
+        push    es
         movzx   cx, bh
         shl     cx, 10
         mov     dx, [lpt_base]
@@ -1437,18 +1404,11 @@ qt_run:
         pop     bx
         push    cs
         pop     es
-        push    di                      ; the caller moves DI on
         mov     al, BP_REG_MEMORY
         call    bk_sget
-        pop     di
         pop     es
-        clc
-        jmp     .o
-.f:     mov     al, 3
-.o:     pop     edx
-        pop     ecx
-        pop     bx
-        ret
+        popad
+.o:     ret
 
 ; DMA channel 2, controller to memory: CX bytes to CS:DI
 qt_dma:
