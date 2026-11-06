@@ -72,8 +72,9 @@ cat > "$OUT/AUTOEXEC.BAT" <<'BAT'
 @ECHO OFF
 CTTY AUX
 ECHO OPENTAPE START > AUX
-REM Under Enhanced DR-DOS the first OPENTAPE run after the boot takes
-REM its long command line as wrong and shows its help; a run before it
+REM Enhanced DR-DOS 20250427 overwrites the first program's command
+REM tail after the boot from its 64th byte on (seen with a bare OpenWatcom
+REM argv dump, no drivers loaded): a short run first
 OPENTAPE --help > NUL
 OPENTAPE --native --fixed-block 512 --backup-tree SRC --as ROOT --device NRMT0 --overwrite --volume QIC > AUX
 IF ERRORLEVEL 1 GOTO failed
