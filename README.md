@@ -24,7 +24,9 @@ track and the lead-out only). With `/F` a QIC-117 floppy tape drive on the
 floppy controller becomes a SCSI tape drive for reading: each volume of a
 QIC-80 cartridge (the volume table of QIC-80/QIC-113) is a tape file,
 read with READ (6) of variable blocks, with filemarks between them;
-QIC-3010 and QIC-3020 cartridges too (format code 6). The
+QIC-3010 and QIC-3020 cartridges too (format code 6), and the Ditto's
+own of 2 GB (format code 4, its scrambled header) to 7 GB (over 65535
+segments). The
 Iomega Ditto on the parallel port, the same drive and a 765 behind a
 BackPack, is read the same way; PORTASPI finds it without `/F`.
 Everything else below is still the plan.
@@ -71,8 +73,9 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   (default 1, the B: line) of the floppy controller at 3F0h. It gets the
   first free SCSI ID; PORTASPI then installs even without a parallel port
   drive. The tape is read in the QIC-80 volume format (format codes 2 to
-  6, that is QIC-80 and its long tapes, QIC-3010 and QIC-3020; tested are
-  2 and 6): the header segment with the bad sector map, the volume table, the volumes' segments with
+  6, that is QIC-80 and its long tapes, QIC-3010, QIC-3020 and the
+  Ditto's; tested are 2, 4 and 6): the header segment with the bad sector
+  map, the volume table, the volumes' segments with
   their three ECC sectors left out. A sector that reads back wrong is put
   right from the segment's Reed-Solomon parity (one a segment); sectors
   the controller cannot read at all (CRC errors) are not corrected yet.
@@ -166,7 +169,10 @@ which makes the run take hours, so the test is meant for a build with it
 off). `FORMAT=qic3010` or `qic3020` with `DITTO=1` takes 86Box's Iomega
 QIC-3020 drive and a cartridge of that standard in format code 6, with a
 whole bad segment and the third volume from near the end of track 0 into
-track 1.
+track 1. `FORMAT=ditto2gb` is the Ditto 2GB with its own cartridge (format
+code 4, the header scrambled as the Ditto writes it), `ditto5gb` and
+`dittomax7` the Ditto Max with cartridges of over 65535 segments, the
+third volume past segment 65535.
 `PROT=1` adds Iomega's write protection (ASPICTL PROTECT/UNPROTEC), which
 checks CHECK CONDITION and the sense data. This uses OpenASPI's
 `tests/dos_86box_zip.sh` with `MGR=`.

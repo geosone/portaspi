@@ -38,11 +38,12 @@
    volume table as tape files, bad sectors skipped, a damaged sector a
    segment corrected from the parity; **and so is the Ditto on the
    parallel port** (86Box's Ditto 2GB with a QIC-80 cartridge), and
-   QIC-3010/3020 cartridges in format code 6 on 86Box's QIC-3020 drive.
+   QIC-3010/3020 cartridges in format code 6 on 86Box's QIC-3020 drive,
+   the Ditto 2GB's own cartridges and the Ditto Max's of over 65535
+   segments.
    Still to do: erasures (up to three sectors with CRC errors; 86Box's
    tape has no such errors to test with), 2 Mbit/s (1 Mbit/s is
-   selected where drive and controller have it), the Ditto 2GB's own
-   cartridges and tapes over 65535 segments.
+   selected where drive and controller have it).
 4. **Floppy tape, writing and formatting**: segments with ECC, bad sector
    map, volume table, streaming.
 5. **Optional**: the floppy drive as a SCSI disk; proprietary CD-ROM

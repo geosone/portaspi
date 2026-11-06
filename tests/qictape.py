@@ -18,6 +18,14 @@ volumes in it, the way the QIC-80 / QIC-113 volume format lays them out:
            of three byte sector numbers from offset 256 (bit 23: the whole
            segment), the volume table in the QIC-113 rev. G layout (start
            and end segment at 76 and 80)
+  ditto2gb an Iomega Ditto 2 GB cartridge, 72 tracks of 502 segments,
+           format code 4 (the bad sector map as for format code 6, the
+           volume table as for QIC-80), and its header as the Ditto writes
+           it: signature 82288228h and everything from offset 256 on
+           scrambled, byte i as ~b + (i mod 256) (Linux ftape's reading)
+  ditto5gb  Ditto 5 GB, 72 tracks of 1256 segments, and
+  dittomax7 Ditto Max 7 GB, 72 tracks of 1758 segments: over 65535
+           segments, format code 6 as for QIC-3010/3020
 
 A segment is 32 sectors of 1024 bytes; its last three good sectors carry
 the Reed-Solomon parity of each byte column (GF(256), x^8+x^7+x^2+x+1,
@@ -28,7 +36,7 @@ roots a^-1, 1, a).  Bad sectors are skipped.  The image is the tape as
 written, as a sector that reads back wrong without a CRC error: the
 reader must put it right from the parity.
 
---bad SEG:* marks the whole segment bad (format code 6 only).
+--bad SEG:* marks the whole segment bad (format codes 4 and 6).
 --last-at SEG starts the last volume at segment SEG, leaving the ones
 before it unused: a volume across the end of a long track.
 
@@ -46,7 +54,9 @@ SECTOR = 1024
 SECTORS = 32
 SEGMENT = SECTOR * SECTORS
 FORMATS = {"qic80": (28, 150, 2), "qic3010": (40, 215, 6),
-           "qic3020": (40, 422, 6)}
+           "qic3020": (40, 422, 6), "ditto2gb": (72, 502, 4),
+           "ditto5gb": (72, 1256, 6), "dittomax7": (72, 1758, 6)}
+D2G = False
 TRACKS, SPT, FMT = FORMATS["qic80"]
 SEGMENTS = TRACKS * SPT
 SEGS_PER_HEAD = 600                             # 150 cylinders of 4
@@ -54,8 +64,9 @@ ALL = 0xFFFFFFFF
 
 
 def set_format(name):
-    global TRACKS, SPT, FMT, SEGMENTS
+    global TRACKS, SPT, FMT, SEGMENTS, D2G
     TRACKS, SPT, FMT = FORMATS[name]
+    D2G = name == "ditto2gb"
     SEGMENTS = TRACKS * SPT
 
 # GF(256) with x^8+x^7+x^2+x+1
@@ -127,7 +138,7 @@ def put_segment(img, bad, seg, data):
 
 def header(bad, label):
     h = bytearray(29 * SECTOR)
-    struct.pack_into("<I", h, 0, 0xAA55AA55)
+    struct.pack_into("<I", h, 0, 0x82288228 if D2G else 0xAA55AA55)
     h[4] = FMT
     if FMT == 6:
         struct.pack_into("<IIII", h, 234, 0, 1, 2, SEGMENTS - 1)
@@ -139,7 +150,7 @@ def header(bad, label):
     h[28] = SEGS_PER_HEAD // 4 - 1              # max floppy track
     h[29] = 128                                 # max floppy sector
     h[30:74] = label.encode("ascii")[:44].ljust(44)
-    if FMT == 6:
+    if FMT in (4, 6):
         off = 256
         for seg in sorted(bad):
             mask = bad[seg]
@@ -154,6 +165,9 @@ def header(bad, label):
     else:
         for seg, mask in bad.items():
             struct.pack_into("<I", h, 2048 + 4 * seg, mask)
+    if D2G:
+        for i in range(256, len(h)):
+            h[i] = (~h[i] + (i & 0xFF)) & 0xFF
     return bytes(h)
 
 
@@ -211,12 +225,17 @@ def make(path, files, bad, label, last_at=None):
 
 def listing(path):
     with open(path, "rb") as img:
-        hdr = img.read(SEGMENT)
-        if hdr[4] == 6:
-            set_format("qic3020" if struct.unpack_from("<H", hdr, 24)[0]
-                       == 422 else "qic3010")
+        hdr = bytearray(img.read(SEGMENT))
+        if hdr[:4] == b"\x28\x82\x28\x82":
+            set_format("ditto2gb")
+            for i in range(256, 29 * SECTOR):
+                hdr[i] = ~(hdr[i] - (i & 0xFF)) & 0xFF
+        elif hdr[4] == 6:
+            spt = struct.unpack_from("<H", hdr, 24)[0]
+            set_format({422: "qic3020", 1256: "ditto5gb",
+                        1758: "dittomax7"}.get(spt, "qic3010"))
         bad = {}
-        if FMT == 6:
+        if FMT in (4, 6):
             off = 256
             while True:
                 e = int.from_bytes(hdr[off:off + 3], "little")
@@ -270,8 +289,8 @@ def main():
         seg, sec = b.split(":")
         seg = int(seg)
         if sec == "*":
-            if FMT != 6:
-                p.error("a whole bad segment needs format code 6")
+            if FMT not in (4, 6):
+                p.error("a whole bad segment needs format code 4 or 6")
             bad[seg] = ALL
         else:
             bad[seg] = bad.get(seg, 0) | (1 << int(sec))

@@ -377,14 +377,14 @@ qt_fmt          db      0               ; format code of the header
 qt_spt          dw      150             ; segments a track
 qt_spc          db      4               ; segments a cylinder
 qt_sph          dw      600             ; segments a head
-qt_first        dw      0               ; first data segment: the volume table
+qt_first        dd      0               ; first data segment: the volume table
 qt_nbad         dw      0
-qt_badlist      times QT_MAXBAD * 6 db 0        ; segment, sector mask
+qt_badlist      times QT_MAXBAD * 8 db 0        ; segment, sector mask
 qt_nvol         db      0
-qt_vols         times QT_MAXVOL * 8 db 0        ; first, last segment, size
+qt_vols         times QT_MAXVOL * 12 db 0       ; first, last segment, size
 qt_vol          db      0               ; position: volume
 qt_voff         dd      0               ; its byte
-qt_cseg         dw      0               ; that byte's segment
+qt_cseg         dd      0               ; that byte's segment
 qt_coff         dw      0               ; and offset in its data
 qt_left         dd      0               ; bytes of a READ still to come
 
@@ -394,13 +394,13 @@ qt_bseg         dd      0FFFFFFFFh      ; the segment it holds
 qt_bcap         dw      0               ; its data bytes
 
 qt_running      db      0               ; the tape streams
-qt_next         dw      0FFFFh          ; the segment it is about to pass
+qt_next         dd      0FFFFFFFFh      ; the segment it is about to pass
 qt_track        db      0FFh            ; the head's track, 0FFh: unknown
 qt_wait         dd      0               ; ticks for qt_ready_wait, 0: /T:
-qt_target       dw      0
+qt_target       dd      0
 qt_ttrack       db      0
 qt_tindex       dw      0
-qt_rseg         dw      0
+qt_rseg         dd      0
 qt_tries        db      0
 qt_rmask        dd      0
 qt_res          times 7 db 0            ; result bytes of a read or READ ID
@@ -417,9 +417,11 @@ qt_vol_start:
         movzx   bx, byte [qt_vol]
         cmp     bl, [qt_nvol]
         jae     .o
-        shl     bx, 3
-        mov     ax, [qt_vols+bx]
-        mov     [qt_cseg], ax
+        imul    bx, bx, 12
+        push    eax
+        mov     eax, [qt_vols+bx]
+        mov     [qt_cseg], eax
+        pop     eax
 .o:     pop     bx
         pop     ax
         ret
@@ -431,8 +433,8 @@ qt_vol_size:
         movzx   bx, byte [qt_vol]
         cmp     bl, [qt_nvol]
         jae     .o
-        shl     bx, 3
-        mov     eax, [qt_vols+bx+4]
+        imul    bx, bx, 12
+        mov     eax, [qt_vols+bx+8]
 .o:     pop     bx
         ret
 
@@ -494,7 +496,7 @@ qt_copy_out:
         push    es
 .next:  or      ecx, ecx
         jz      .ok
-        movzx   eax, word [qt_cseg]
+        mov     eax, [qt_cseg]
         cmp     eax, [qt_bseg]
         je      .have
         call    qt_read_seg
@@ -502,7 +504,7 @@ qt_copy_out:
 .have:  mov     ax, [qt_bcap]
         sub     ax, [qt_coff]
         ja      .take
-        inc     word [qt_cseg]          ; on to the next segment
+        inc     dword [qt_cseg]         ; on to the next segment
         mov     word [qt_coff], 0
         jmp     .next
 .take:  movzx   ebx, ax                 ; this chunk: what the segment has
@@ -579,9 +581,10 @@ qt_space:
         call    qt_vol_start
         call    qt_vol_size
         mov     [qt_voff], eax
-        mov     bx, [qt_vols+ebx*8+2]   ; past its last segment
-        inc     bx
-        mov     [qt_cseg], bx
+        imul    ebx, ebx, 12
+        mov     ebx, [qt_vols+ebx+4]    ; past its last segment
+        inc     ebx
+        mov     [qt_cseg], ebx
         clc
         ret
 .bot:   neg     ebx
@@ -608,7 +611,7 @@ qt_rewind:
         mov     dword [qt_wait], 0
         jc      .o
         mov     byte [qt_track], 0FFh   ; drives differ in where the head
-        mov     word [qt_next], 0FFFFh  ; goes: seek it to the track again
+        mov     dword [qt_next], 0FFFFFFFFh  ; goes: seek it to the track again
         clc
 .o:     ret
 .hw:    mov     eax, SNS_QT_HW
@@ -620,7 +623,7 @@ qt_stop:
         cmp     byte [qt_running], 0
         je      .ok
         mov     byte [qt_running], 0
-        mov     word [qt_next], 0FFFFh
+        mov     dword [qt_next], 0FFFFFFFFh
         mov     al, QIC_STOP
         call    qt_command
         jc      .hw
@@ -664,6 +667,10 @@ qt_load:
         mov     si, [qt_buf]
         cmp     dword [si], 0AA55AA55h
         je      .found
+        cmp     dword [si], 82288228h   ; a Ditto 2GB's header
+        jne     .hnext
+        call    qt_d2g
+        jmp     .found
 .hnext: pop     eax
         inc     eax
         cmp     eax, 16
@@ -674,7 +681,7 @@ qt_load:
 .found: pop     eax
         call    qt_header
         jc      .o
-        movzx   eax, word [qt_first]    ; the volume table
+        mov     eax, [qt_first]         ; the volume table
         call    qt_read_seg
         jc      .o
         call    qt_vtbl
@@ -683,6 +690,29 @@ qt_load:
         call    qt_vol_start
 .ok:    clc
 .o:     ret
+
+; the Ditto 2GB's header in the buffer: everything from offset 256 on is
+; scrambled, byte i as ~b + (i mod 256) (as Linux ftape reads it back)
+qt_d2g: push    bx
+        push    cx
+        push    si
+        mov     si, [qt_buf]
+        mov     cx, 256
+.l:     cmp     cx, [qt_bcap]
+        jae     .o
+        mov     bx, si
+        add     bx, cx
+        mov     al, [bx]
+        sub     al, cl
+        not     al
+        mov     [bx], al
+        inc     cx
+        jmp     .l
+.o:     mov     dword [si], 0AA55AA55h
+        pop     si
+        pop     cx
+        pop     bx
+        ret
 
 ; the header segment in the buffer: the geometry and the bad sector map.
 ; CF and EAX = the sense if the format is not known.
@@ -694,11 +724,11 @@ qt_header:
         jb      .bad
         cmp     al, 6
         ja      .bad
-        mov     ax, [si+10]             ; first data segment
+        movzx   eax, word [si+10]       ; first data segment
         cmp     byte [qt_fmt], 6
         jne     .f
-        mov     ax, [si+242]
-.f:     mov     [qt_first], ax
+        mov     eax, [si+242]
+.f:     mov     [qt_first], eax
         mov     ax, [si+24]
         or      ax, ax
         jz      .bad
@@ -723,13 +753,13 @@ qt_header:
 
         ; a sector mask a segment from offset 2048
         add     si, 2048
-        xor     dx, dx                  ; segment
+        xor     edx, edx                ; segment
 .m:     mov     eax, [si]
         or      eax, eax
         jz      .mn
         call    qt_bad_add
 .mn:    add     si, 4
-        inc     dx
+        inc     edx
         mov     ax, si
         sub     ax, [qt_buf]
         cmp     ax, 29 * 1024
@@ -756,9 +786,7 @@ qt_header:
         xor     edx, edx
         mov     ebx, 32
         div     ebx                     ; EAX = segment, EDX = sector
-        cmp     eax, 0FFFFh
-        ja      .list
-        xchg    eax, edx                ; DX = segment
+        xchg    eax, edx                ; EDX = segment
         mov     cl, al
         mov     eax, 1
         shl     eax, cl
@@ -773,45 +801,46 @@ qt_header:
         stc
         ret
 
-; segment DX has the bad sectors EAX: into the list (sorted as the map)
+; segment EDX has the bad sectors EAX: into the list (sorted as the map)
 qt_bad_add:
         push    bx
         mov     bx, [qt_nbad]
         or      bx, bx
         jz      .new
-        imul    bx, bx, 6
-        cmp     [qt_badlist+bx-6], dx   ; the last entry's segment?
+        shl     bx, 3
+        cmp     [qt_badlist+bx-8], edx  ; the last entry's segment?
         jne     .new2
-        or      [qt_badlist+bx-6+2], eax
+        or      [qt_badlist+bx-8+4], eax
         jmp     .o
 .new:   xor     bx, bx
 .new2:  cmp     word [qt_nbad], QT_MAXBAD
         jae     .o                      ; too many: read as good
-        mov     [qt_badlist+bx], dx
-        mov     [qt_badlist+bx+2], eax
+        mov     [qt_badlist+bx], edx
+        mov     [qt_badlist+bx+4], eax
         inc     word [qt_nbad]
 .o:     pop     bx
         ret
 
-; the bad sectors of segment AX -> EAX
+; the bad sectors of segment EAX -> EAX
 qt_badmask:
         push    bx
         push    cx
         mov     cx, [qt_nbad]
         mov     bx, qt_badlist
         jcxz    .none
-.l:     cmp     [bx], ax
+.l:     cmp     [bx], eax
         je      .f
-        add     bx, 6
+        add     bx, 8
         loop    .l
 .none:  xor     eax, eax
         jmp     .o
-.f:     mov     eax, [bx+2]
+.f:     mov     eax, [bx+4]
 .o:     pop     cx
         pop     bx
         ret
 
-; the data bytes of segment AX -> AX (0 with three good sectors or fewer)
+; the data bytes of segment EAX -> AX (0 with three good sectors or
+; fewer; the high half of EAX is lost)
 qt_capacity:
         push    ecx
         push    dx
@@ -855,36 +884,35 @@ qt_vtbl:
         jmp     .o
 .vol:   cmp     byte [qt_nvol], QT_MAXVOL
         jae     .o
-        mov     ax, [si+4]              ; first and last segment
-        mov     bx, [si+6]
+        movzx   eax, word [si+4]        ; first and last segment
+        movzx   ebx, word [si+6]
         cmp     byte [qt_fmt], 6
         jne     .se
-        mov     ax, [si+76]
-        mov     bx, [si+80]
-.se:    mov     [di], ax
-        mov     [di+2], bx
+        mov     eax, [si+76]
+        mov     ebx, [si+80]
+.se:    mov     [di], eax
+        mov     [di+4], ebx
         mov     eax, [si+96]            ; the size of the data
         cmp     dword [si+100], 0
         je      .sz
         mov     eax, 0FFFFFFFFh
 .sz:    or      eax, eax
         jnz     .put
-        push    dx                      ; none: all its segments hold
-        mov     dx, [di]
-.sum:   cmp     dx, [di+2]
+        push    edx                     ; none: all its segments hold
+        mov     edx, [di]
+.sum:   cmp     edx, [di+4]
         ja      .sumd
         push    eax
-        mov     ax, dx
+        mov     eax, edx
         call    qt_capacity
-        movzx   edx, dx
         movzx   eax, ax
         pop     ebx
         add     eax, ebx
-        inc     dx
+        inc     edx
         jmp     .sum
-.sumd:  pop     dx
-.put:   mov     [di+4], eax
-        add     di, 8
+.sumd:  pop     edx
+.put:   mov     [di+8], eax
+        add     di, 12
         inc     byte [qt_nvol]
         add     si, 128
         dec     cx
@@ -904,21 +932,21 @@ qt_read_seg:
         push    si
         push    di
         mov     dword [qt_bseg], 0FFFFFFFFh
-        mov     [qt_rseg], ax
+        mov     [qt_rseg], eax
         call    qt_badmask
         mov     [qt_rmask], eax
-        mov     ax, [qt_rseg]
+        mov     eax, [qt_rseg]
         call    qt_capacity
         mov     [qt_bcap], ax
         or      ax, ax
         jnz     .read
-        mov     ax, [qt_rseg]           ; no data in it: nothing to read
-        cmp     [qt_next], ax
+        mov     eax, [qt_rseg]          ; no data in it: nothing to read
+        cmp     [qt_next], eax
         jne     .done
-        inc     word [qt_next]
+        inc     dword [qt_next]
         jmp     .done
 .read:  mov     byte [qt_tries], 3
-.again: mov     ax, [qt_rseg]
+.again: mov     eax, [qt_rseg]
         call    qt_locate
         jc      .o
         mov     di, [qt_buf]
@@ -961,15 +989,16 @@ qt_read_seg:
 .read_ok:
         call    qt_ecc                  ; a damaged sector is put right
         jc      .rderr
-        mov     ax, [qt_rseg]           ; the tape streams on
-        inc     ax
-        mov     [qt_next], ax
-        xor     dx, dx
-        div     word [qt_spt]
-        or      dx, dx                  ; but stops at the end of a track
+        mov     eax, [qt_rseg]          ; the tape streams on
+        inc     eax
+        mov     [qt_next], eax
+        xor     edx, edx
+        movzx   ecx, word [qt_spt]
+        div     ecx
+        or      edx, edx                ; but stops at the end of a track
         jnz     .done
-        mov     word [qt_next], 0FFFFh
-.done:  movzx   eax, word [qt_rseg]
+        mov     dword [qt_next], 0FFFFFFFFh
+.done:  mov     eax, [qt_rseg]
         mov     [qt_bseg], eax
         clc
         jmp     .o
@@ -1111,23 +1140,24 @@ qt_ecc: pushad
         stc
         ret
 
-; get the tape streaming just before segment AX.  CF and EAX = the sense.
+; get the tape streaming just before segment EAX.  CF and EAX = the sense.
 qt_locate:
-        push    bx
-        push    cx
-        push    dx
+        push    ebx
+        push    ecx
+        push    edx
         push    si
-        mov     [qt_target], ax
+        mov     [qt_target], eax
         cmp     byte [qt_running], 0
         je      .stopped
-        cmp     ax, [qt_next]           ; it is coming
+        cmp     eax, [qt_next]          ; it is coming
         je      .ok
         call    qt_stop
         jc      .o
 .stopped:
-        mov     ax, [qt_target]
-        xor     dx, dx
-        div     word [qt_spt]           ; AX = track, DX = segment in it
+        mov     eax, [qt_target]
+        xor     edx, edx
+        movzx   ecx, word [qt_spt]
+        div     ecx                     ; EAX = track, EDX = segment in it
         mov     [qt_tindex], dx
         cmp     al, [qt_track]
         je      .ontrack
@@ -1168,19 +1198,20 @@ qt_locate:
 .id0:   mov     si, 4 * 32 + 8          ; IDs to read before skipping on
 .id:    call    qt_readid
         jc      .idfail
-        mov     bx, [qt_target]
-        dec     bx                      ; the segment before the target
-        cmp     ax, bx
+        mov     ebx, [qt_target]
+        dec     ebx                     ; the segment before the target
+        cmp     eax, ebx
         je      .ok
         ja      .back
-        mov     dx, bx                  ; still before it
-        sub     dx, ax
-        cmp     dx, 4
+        mov     edx, ebx                ; still before it
+        sub     edx, eax
+        cmp     edx, 4
         ja      .fwd
         dec     si
         jnz     .id
 .fwd:   call    qt_stop                 ; skip on to it
         jc      .o
+        call    qt_skipmax
         dec     dx
         jz      .retry
         mov     al, QIC_SKIP_FWD
@@ -1189,9 +1220,10 @@ qt_locate:
         jmp     .retry
 .back:  call    qt_stop                 ; past it: back
         jc      .o
-        mov     dx, ax
-        sub     dx, bx
-        inc     dx
+        mov     edx, eax
+        sub     edx, ebx
+        inc     edx
+        call    qt_skipmax
         mov     al, QIC_SKIP_REV
         call    qt_skip
         jc      .o
@@ -1203,13 +1235,13 @@ qt_locate:
         mov     eax, SNS_QT_READ
         stc
         jmp     .o
-.ok:    mov     ax, [qt_target]
-        mov     [qt_next], ax
+.ok:    mov     eax, [qt_target]
+        mov     [qt_next], eax
         clc
 .o:     pop     si
-        pop     dx
-        pop     cx
-        pop     bx
+        pop     edx
+        pop     ecx
+        pop     ebx
         ret
 .hw:    mov     eax, SNS_QT_HW
         stc
@@ -1221,12 +1253,20 @@ qt_forward:
         call    qt_command
         jc      .hw
         mov     byte [qt_running], 1
-        mov     word [qt_next], 0FFFFh
+        mov     dword [qt_next], 0FFFFFFFFh
         clc
         ret
 .hw:    mov     eax, SNS_QT_HW
         stc
         ret
+
+; EDX segments to skip, at most what three nibbles say (the head is on
+; the right track: a READ ID that far away is wrong, the next one less so)
+qt_skipmax:
+        cmp     edx, 0FFFh
+        jbe     .o
+        mov     edx, 0FFFh
+.o:     ret
 
 ; skip DX segments, AL = QIC_SKIP_FWD or QIC_SKIP_REV.  CF and EAX = the
 ; sense.
@@ -1258,11 +1298,12 @@ qt_skip:
         pop     cx
         ret
 
-; READ ID -> AX = the segment under the head (qt_idsec its sector).  CF if
-; there is none.
+; READ ID -> EAX = the segment under the head (qt_idsec its sector).  CF
+; if there is none.
 qt_readid:
-        push    bx
-        push    dx
+        push    ebx
+        push    ecx
+        push    edx
         call    qt_select
         call    qt_int_clear
         mov     al, 4Ah                 ; READ ID, MFM
@@ -1279,16 +1320,19 @@ qt_readid:
         and     ah, 1Fh
         mov     [qt_idsec], ah
         shr     al, 5
-        movzx   bx, al
+        movzx   ebx, al
         movzx   ax, byte [qt_res+3]     ; C
         mul     byte [qt_spc]
-        add     bx, ax
-        movzx   ax, byte [qt_res+4]     ; H
-        mul     word [qt_sph]
-        add     ax, bx
+        movzx   eax, ax
+        add     ebx, eax
+        movzx   eax, byte [qt_res+4]    ; H
+        movzx   ecx, word [qt_sph]
+        mul     ecx
+        add     eax, ebx
         clc
-.o:     pop     dx
-        pop     bx
+.o:     pop     edx
+        pop     ecx
+        pop     ebx
         ret
 
 ; wait for the interrupt and the seven result bytes of a read or READ ID.
@@ -1327,14 +1371,15 @@ qt_result:
 ; failure, AL = 1 if the sectors were not found.
 qt_run:
         push    bx
-        push    cx
-        push    dx
+        push    ecx
+        push    edx
         movzx   cx, bh
         shl     cx, 10
         call    qt_dma
-        mov     ax, [qt_rseg]
-        xor     dx, dx
-        div     word [qt_sph]           ; AX = head, DX = segment in it
+        mov     eax, [qt_rseg]
+        xor     edx, edx
+        movzx   ecx, word [qt_sph]
+        div     ecx                     ; EAX = head, EDX = segment in it
         mov     ch, al
         mov     ax, dx
         div     byte [qt_spc]           ; AL = cylinder, AH = segment in it
@@ -1400,8 +1445,8 @@ qt_run:
         clc
         jmp     .o
 .f:     mov     al, 3
-.o:     pop     dx
-        pop     cx
+.o:     pop     edx
+        pop     ecx
         pop     bx
         ret
 

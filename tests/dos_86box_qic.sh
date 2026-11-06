@@ -17,6 +17,11 @@
 # FORMAT=qic3010 or qic3020 (with DITTO=1): an Iomega QIC-3020 drive on
 # LPT1 with a QIC-3010 or QIC-3020 cartridge in format code 6; the third
 # volume starts near the end of track 0, a whole segment is bad.
+# FORMAT=ditto2gb (with DITTO=1): the Ditto 2GB with its own cartridge
+# (format code 4, the scrambled header), laid out the same way.
+# FORMAT=ditto5gb or dittomax7 (with DITTO=1): the Ditto Max with a
+# cartridge of over 65535 segments, the third volume past segment 65535,
+# again across the end of a track.
 # Needs 86Box master of 2026-11-05 or later (86Box/86Box#8748: before it
 # the emulator crashed when the tape started to stream).
 set -euo pipefail
@@ -30,10 +35,14 @@ MGROPT=${MGROPT:-}
 TAPE=${TAPE:-}
 FORMAT=${FORMAT:-qic80}
 case $FORMAT in
-    qic80) MEDIUM=14 SPT=150 ;;     # 86Box tape_types[]: QIC-80, DC-2120
-    qic3010) MEDIUM=17 SPT=215 ;;
-    qic3020) MEDIUM=18 SPT=422 ;;
-    *) echo "FORMAT: qic80, qic3010 or qic3020" >&2; exit 1 ;;
+    qic80) MEDIUM=12 SPT=150 ;;     # 86Box tape_types[] (past its #if 0)
+    qic3010) MEDIUM=15 SPT=215 ;;
+    qic3020) MEDIUM=16 SPT=422 ;;
+    ditto2gb) MEDIUM=7 SPT=502 ;;
+    ditto5gb) MEDIUM=9 SPT=1256 ;;
+    dittomax7) MEDIUM=10 SPT=1758 ;;
+    *) echo "FORMAT: qic80, qic3010, qic3020, ditto2gb, ditto5gb or" \
+            "dittomax7" >&2; exit 1 ;;
 esac
 if [ "$FORMAT" != qic80 ] && [ "${DITTO:-0}" != 1 ]; then
     echo "FORMAT=$FORMAT needs DITTO=1 (fdd_tape.c is a QIC-80 drive)" >&2
@@ -70,10 +79,11 @@ else
             "${VOLS[@]}"
     else
         L=$((SPT - 8))
+        case $FORMAT in ditto5gb|dittomax7) L=$(((65536 / SPT + 2) * SPT - 8)) ;; esac
         python3 -I "$ROOT/tests/qictape.py" "$OUT/tape.img" \
             --format "$FORMAT" --bad 4:5 --bad 6:'*' --last-at $L \
             --damage 3:10 --damage 4:30 --damage 20:0 \
-            --damage $((SPT + 1)):31 "${VOLS[@]}"
+            --damage $((L + 9)):31 "${VOLS[@]}"
     fi
 fi
 python3 -I - "${VOLS[@]}" > "$OUT/expect.txt" <<'PY'
@@ -96,7 +106,7 @@ if [ "${DITTO:-0}" = 1 ]; then
     cat >> "$OUT/86box.cfg" <<CFG
 
 [Other removable devices]
-tape_01_parameters = $([ "$FORMAT" = qic80 ] && echo 5 || echo 7), lpt
+tape_01_parameters = $(case $FORMAT in qic80|ditto2gb) echo 5 ;; ditto5gb|dittomax7) echo 6 ;; *) echo 7 ;; esac), lpt
 tape_01_medium_type = $MEDIUM
 tape_01_lpt_port = 0
 tape_01_image_path = tape.img
