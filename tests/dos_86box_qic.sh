@@ -34,7 +34,9 @@
 # then writes as W; WRITE=V the same with VERIFY.  MEDIUM= another 86Box
 # medium for it (DITTO=1).
 # Needs 86Box master of 2026-11-05 or later (86Box/86Box#8748: before it
-# the emulator crashed when the tape started to stream).
+# the emulator crashed when the tape started to stream), for DITTO=1 of
+# 2026-11-06 (86Box/86Box#8756: before it the Ditto logged every port
+# access, which made a run take hours).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OPENASPI=${OPENASPI:-$ROOT/../OpenAspi}

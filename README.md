@@ -189,9 +189,8 @@ reversed track 1, and four sectors damaged after their parity was written
 through ASPI and prints its size and CRC-32, spaces over filemarks and
 reads again; the host compares. `TAPE=` takes another cartridge image.
 `DITTO=1` puts the cartridge into an Iomega Ditto 2GB on LPT1 instead
-(86Box's `lpt_ditto.c`; its log of every port access is on in master,
-which makes the run take hours, so the test is meant for a build with it
-off). `FORMAT=qic3010` or `qic3020` with `DITTO=1` takes 86Box's Iomega
+(86Box's `lpt_ditto.c`; master of 2026-11-06 or later, 86Box/86Box#8756,
+before which its log of every port access made a run take hours). `FORMAT=qic3010` or `qic3020` with `DITTO=1` takes 86Box's Iomega
 QIC-3020 drive and a cartridge of that standard in format code 6, with a
 whole bad segment and the third volume from near the end of track 0 into
 track 1. `FORMAT=ditto2gb` is the Ditto 2GB with its own cartridge (format
