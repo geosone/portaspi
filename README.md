@@ -78,8 +78,11 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   the controller cannot read at all (CRC errors) are not corrected yet.
   REWIND, SPACE over filemarks and to the end of data, READ BLOCK LIMITS,
   MODE SENSE and LOAD/UNLOAD are there; writing and formatting are not
-  yet. The controller runs at 500 kbit/s; the faster rates of QIC-3010
-  and QIC-3020 drives (1 and 2 Mbit/s) are not selected yet. While it reads PORTASPI takes IRQ 6 and DMA channel 2, and keeps the
+  yet. The tape runs at 1 Mbit/s where the cartridge (not QIC-40), the
+  drive (SELECT RATE, and its configuration then says so) and the
+  controller (an 82077 or later: VERSION 90h) all have it, otherwise at
+  500 kbit/s; it drops back to 500 kbit/s if the header cannot be read.
+  2 Mbit/s (an 82078-1) is not done; QIC-3020 needs 1 Mbit/s or more. While it reads PORTASPI takes IRQ 6 and DMA channel 2, and keeps the
   BIOS from turning the floppy motors off under it; the resident part grows
   by the 32 KB segment buffer.
 - An Iomega Ditto on the port is found with the BackPack units: a pod

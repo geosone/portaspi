@@ -80,6 +80,8 @@ QIC_ROM         equ     9
 QIC_LOAD_POINT  equ     14
 QIC_STOP        equ     18
 QIC_VENDOR      equ     32
+QIC_SEL_RATE    equ     27              ; select rate, a parameter
+QIC_TAPE_STAT   equ     33              ; the cartridge: format, length
 
 ; drive status
 QS_READY        equ     01h
@@ -121,6 +123,8 @@ qt_cyl          db      0               ; the controller's cylinder
 qt_vendor       dw      0
 qt_rom          db      0
 qt_config       db      0
+qt_fdcver       db      0               ; VERSION: 90h an 82077 or later
+qt_ccr          db      0               ; the data rate: 0 500 kbit/s, 3 1 Mbit/s
 qt_sns          dd      0               ; sense of the last command
 qt_sflags       db      0               ; and its filemark, EOM, ILI
 qt_sinfo        dd      0               ; and its information, if not 0FFh..
@@ -637,6 +641,7 @@ qt_load:
         jne     .ok
         call    qt_rewind
         jc      .o
+        call    qt_pick_rate
         mov     word [qt_nbad], 0       ; the header has no bad sectors
         mov     word [qt_spt], 150      ; the QIC-80 grid until it is read
         mov     byte [qt_spc], 4
@@ -644,7 +649,18 @@ qt_load:
         xor     eax, eax                ; the header: the first segment
 .hs:    push    eax                     ; with the signature
         call    qt_read_seg
-        jc      .hnext
+        jnc     .hsig
+        cmp     byte [qt_ccr], 0        ; nothing read at 1 Mbit/s: try
+        je      .hnext                  ; it at 500 kbit/s from the start
+        xor     al, al
+        call    qt_set_rate
+        jnc     .h500
+        mov     byte [qt_ccr], 0
+        call    qt_clock
+.h500:  pop     eax
+        xor     eax, eax
+        jmp     .hs
+.hsig:
         mov     si, [qt_buf]
         cmp     dword [si], 0AA55AA55h
         je      .found
@@ -1831,18 +1847,8 @@ qt_reset:
 .si:    call    qt_sense_int
         jc      .o
         loop    .si
-        mov     al, 03h                 ; SPECIFY
-        call    qt_out
+        call    qt_clock                ; the rate the drive runs at
         jc      .o
-        mov     al, 0E1h                ; 2 ms steps at 500 kbit/s, unload
-        call    qt_out
-        jc      .o
-        mov     al, 02h                 ; head load, DMA
-        call    qt_out
-        jc      .o
-        mov     ah, QT_CCR
-        xor     al, al                  ; 500 kbit/s
-        call    qt_wr
         mov     byte [qt_cyl], 0
         cmp     byte [qt_bp], 0
         jne     .ok
@@ -1908,6 +1914,99 @@ qic_init:
 .none:  stc
         ret
 
+;-----------------------------------------------------------------------------
+; The data rate
+;
+; A cartridge is read at a rate its standard has (QIC-80 and QIC-3010 at
+; 500 kbit/s or 1 Mbit/s, QIC-3020 at 1 or 2 Mbit/s), that the drive takes
+; (SELECT RATE, then its configuration says it) and that the controller
+; has: 1 Mbit/s needs an 82077 or later (VERSION 90h).  2 Mbit/s (an
+; 82078-1 and its drive specification table) is not done.
+;-----------------------------------------------------------------------------
+
+; the controller at rate qt_ccr: CCR and SPECIFY (2 ms steps at that
+; clock, unload, head load, DMA).  CF on timeout.
+qt_clock:
+        mov     al, [qt_ccr]
+        mov     ah, QT_CCR
+        call    qt_wr
+        mov     al, 03h                 ; SPECIFY
+        call    qt_out
+        jc      .o
+        mov     al, 0E1h                ; 500 kbit/s: step rate 14
+        cmp     byte [qt_ccr], 3
+        jne     .s
+        mov     al, 0C1h                ; 1 Mbit/s: 12
+.s:     call    qt_out
+        jc      .o
+        mov     al, 02h
+        call    qt_out
+.o:     ret
+
+; drive and controller to rate AL (a CCR code, 0 or 3).  CF if the drive
+; does not take it; the controller then stays as it was.
+qt_set_rate:
+        push    bx
+        push    cx
+        mov     bh, al
+        mov     bl, 2                   ; QIC-117: 2 is 500 kbit/s,
+        cmp     al, 3
+        jne     .c
+        mov     bl, 3                   ; 3 is 1 Mbit/s
+.c:     mov     al, QIC_SEL_RATE
+        call    qt_command
+        jc      .f
+        mov     al, bl
+        add     al, 2                   ; a parameter
+        call    qt_command
+        jc      .f
+        call    qt_ready_wait           ; an error: refused
+        jc      .f
+        mov     al, QIC_CONFIG          ; and the drive says it runs so
+        mov     cl, 8
+        call    qt_report
+        jc      .f
+        mov     [qt_config], al
+        shr     al, 3
+        and     al, 3
+        cmp     al, bl
+        jne     .f
+        mov     [qt_ccr], bh
+        call    qt_clock
+        jmp     .o
+.f:     stc
+.o:     pop     cx
+        pop     bx
+        ret
+
+; the fastest rate cartridge, drive and controller have in common
+qt_pick_rate:
+        push    cx
+        mov     al, QIC_TAPE_STAT       ; the standard; QIC-80 if the drive
+        mov     cl, 8                   ; cannot say
+        call    qt_report
+        jnc     .std
+        call    qt_get_status           ; clear the refusal
+        test    al, QS_ERROR
+        jz      .q80
+        call    qt_get_error
+.q80:   mov     al, 2
+.std:   and     al, 0Fh
+        cmp     al, 1                   ; QIC-40: 500 kbit/s at most
+        je      .slow
+        cmp     byte [qt_fdcver], 90h
+        jne     .slow
+        mov     al, 3
+        call    qt_set_rate
+        jnc     .o
+.slow:  xor     al, al
+        call    qt_set_rate
+        jnc     .o
+        mov     byte [qt_ccr], 0        ; a drive without SELECT RATE
+        call    qt_clock
+.o:     pop     cx
+        ret
+
 ; qt_ditto_probe: is the pod (connected) a Ditto: a 765 at 40h whose
 ; interrupt shows in register 00h?  -> qt_bp = 1.  CF if not.
 qt_ditto_probe:
@@ -1926,8 +2025,15 @@ qt_ditto_probe:
         ret
 
 qic_probe:
+        mov     byte [qt_ccr], 0
         call    qt_reset
         jc      .none
+        mov     al, 10h                 ; VERSION: 80h (invalid) on a 765
+        call    qt_out
+        jc      .none
+        call    qt_in
+        jc      .none
+        mov     [qt_fdcver], al
         call    qt_get_status
         jc      .none
         test    al, QS_ERROR | QS_NEWCART
