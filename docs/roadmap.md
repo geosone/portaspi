@@ -58,9 +58,12 @@
 5. **Optional**: the floppy drive as a SCSI disk; proprietary CD-ROM
    interfaces; further buses from [devices](devices.md#further-ideas-of-the-same-kind).
    **The Mitsumi interface is done** (`/C:MCD,base`, tested with 86Box's
-   ISA model and an FX001D, disc change too). 86Box also emulates the
-   Panasonic/MKE (Creative), Sony CDU-31A, Philips CM250 and CM-153 and
-   Hitachi interfaces, the candidates after it.
+   ISA model and an FX001D, disc change too), **and so is the Panasonic
+   interface for the CR-562/CR-563** (`/C:MKE` on Creative's cards,
+   `/C:PANA` on Panasonic's; 86Box's MKE model). Still open there: its
+   other drive families (CR-521, CD-200, TEAC CD-55A). 86Box also
+   emulates the Sony CDU-31A, Philips CM250 and CM-153 and Hitachi
+   interfaces, the candidates after it.
 
 ## Testing
 

@@ -50,6 +50,7 @@ dev_mcd         db      0               ; the drive is the pod's Mitsumi
 mc_isa          db      0               ; this command: the ISA drive
 cd_id           db      0FFh            ; SCSI ID of the ISA drive, 0FFh: none
 cd_base         dw      0               ; its port, /C:MCD,base
+cd_type         db      0               ; its interface, CD_xxx
 mc_speed        db      0               ; 1 for an FX001D (double speed)
 mc_ua           db      0               ; this change was reported
 mc_sns          dd      0               ; sense of the last command

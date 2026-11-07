@@ -207,8 +207,10 @@ dev_exec:
         mov     al, [x_target]
         cmp     al, [cd_id]             ; the CD-ROM drive on ISA
         jne     .nocd
-        mov     byte [mc_isa], 1
         pop     ax
+        cmp     byte [cd_type], CD_MCD  ; resident: not opt_cd
+        jne     mke_exec
+        mov     byte [mc_isa], 1
         jmp     mcd_exec
 .nocd:  cmp     al, [qt_id]             ; the floppy tape
         pop     ax

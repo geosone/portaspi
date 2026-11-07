@@ -13,7 +13,9 @@
 ; BackPack become SCSI tape drives (qic.inc, the Reed-Solomon code in
 ; qicecc.inc): reading, writing and formatting QIC-80, QIC-3010/3020 and
 ; Ditto cartridges.  A Mitsumi CD-ROM drive on Mitsumi's ISA interface
-; (/C:MCD) is a SCSI CD-ROM drive too (mcd.inc).  It works alone or together with other ASPI managers:
+; (/C:MCD) is a SCSI CD-ROM drive too (mcd.inc), and so is a Panasonic
+; CR-562/CR-563 on Creative's or Panasonic's interface (/C:MKE, /C:PANA;
+; mke.inc).  It works alone or together with other ASPI managers:
 ; it chains to a manager loaded before it, and managers loaded after it
 ; can chain to it.
 ;
@@ -26,7 +28,7 @@
 ;
 ; CONFIG.SYS:
 ;   DEVICE=PORTASPI.SYS [/P:addr] [/M:NIBBLE|PS2|EPP] [/F[:unit]]
-;                       [/C:MCD[,base]] [/T:s] [/ID:name] [/Q] [/V]
+;                       [/C:MCD|MKE|PANA[,base]] [/T:s] [/ID:name] [/Q] [/V]
 ;
 ;   /P:addr  parallel port base address in hex (default: the LPT ports in
 ;            the BIOS data area, the first one with a drive)
@@ -34,8 +36,10 @@
 ;            (default: PS2 where the port is bidirectional, else NIBBLE)
 ;   /F:unit  also a floppy tape drive (QIC-117) on drive select line unit
 ;            (0-3, default 1) of the floppy controller at 3F0h (qic.inc)
-;   /C:MCD,base  also a CD-ROM drive on Mitsumi's own ISA interface at port
-;            base (hex, default 300h; mcd.inc)
+;   /C:if,base  also a CD-ROM drive on a proprietary ISA interface at port
+;            base (hex): MCD Mitsumi's (default 300h; mcd.inc), MKE the
+;            Panasonic interface of Creative's Sound Blaster cards (230h),
+;            PANA Panasonic's own card (340h; both mke.inc)
 ;   /T:s     command timeout in seconds (default 15)
 ;   /ID:name ASPI manager id (default PORTASPI)
 ;   /Q       quiet, /V verbose
@@ -592,6 +596,7 @@ auto_sense:
 %include "ata.inc"
 %include "fdc.inc"
 %include "mcd.inc"
+%include "mke.inc"
 %include "qic.inc"
 %include "atapi.inc"
 
@@ -613,7 +618,10 @@ opt_mode        db      0FFh            ; /M:, 0FFh: choose
 opt_quiet       db      0               ; /Q
 opt_verbose     db      0               ; /V
 opt_tape        db      0               ; /F: unit + 1
-opt_cd          db      0               ; /C: 1 Mitsumi
+opt_cd          db      0               ; /C: the interface, CD_xxx
+CD_MCD          equ     1
+CD_MKE          equ     2               ; Creative's Panasonic interface
+CD_PANA         equ     3               ; Panasonic's own
 res_end         dw      resident_end    ; and the tape's buffer
 inq_buf         times 36 db 0
 id_buf          times 512 db 0         ; IDENTIFY DEVICE data
@@ -623,10 +631,13 @@ msg_banner      db      'PORTASPI ', VERSION_STR
 msg_no386       db      'PORTASPI needs a 386 or better', 13, 10, 0
 msg_no_dev      db      'PORTASPI: no drive found on the parallel ports', 13, 10, 0
 msg_no_tape     db      'PORTASPI: no drive found on the parallel ports or the floppy controller', 13, 10, 0
-msg_cd          db      '  Mitsumi interface ', 0
+msg_cd          db      '  CD-ROM interface ', 0
 msg_cd2         db      'h: ', 0
-msg_no_cd       db      'PORTASPI: no Mitsumi CD-ROM drive at the /C: port', 13, 10, 0
-id_cd           db      'MCD ', 0
+msg_no_cd       db      'PORTASPI: no CD-ROM drive at the /C: port', 13, 10, 0
+id_cd           dw      id_mcd, id_mcd, id_mke, id_pana
+id_mcd          db      'MCD ', 0
+id_mke          db      'MKE ', 0
+id_pana         db      'PANA ', 0
 msg_tape        db      '  floppy controller 3F0h, unit ', 0
 msg_tape2       db      ': QIC-117 tape', 13, 10, 0
 id_tape         db      'QIC FDC 03F0 u', 0
@@ -862,9 +873,14 @@ cd_setup:
         cmp     bx, NTARGET
         jb      .free
         jmp     .none
-.id:    mov     byte [mc_isa], 1
+.id:    cmp     byte [opt_cd], CD_MCD
+        jne     .mke
+        mov     byte [mc_isa], 1
         call    mcd_probe
         mov     byte [mc_isa], 0
+        jmp     .probed
+.mke:   call    mke_probe
+.probed:
         jc      .nodrv
         mov     [cd_id], bl
         mov     byte [dev_type+bx], 5   ; CD-ROM
@@ -886,7 +902,9 @@ cd_setup:
         mov     al, ' '
         rep     stosb
         mov     di, ha_ident
-        mov     si, id_cd
+        movzx   si, byte [opt_cd]
+        shl     si, 1
+        mov     si, [id_cd+si]
 .idc:   lodsb
         or      al, al
         jz      .idp
@@ -1326,10 +1344,28 @@ parse_cmdline:
 .opt_c: call    get_colon
         jc      .bad
         mov     di, kw_mcd
+        mov     ah, CD_MCD
+        mov     bx, 300h
+        call    match_kw
+        jnc     .setc
+        mov     di, kw_mke
+        mov     ah, CD_MKE
+        mov     bx, 230h
+        call    match_kw
+        jnc     .setc
+        mov     di, kw_pana
+        mov     ah, CD_PANA
+        mov     bx, 340h
         call    match_kw
         jc      .bad
-        mov     byte [opt_cd], 1
-        mov     word [cd_base], 300h
+.setc:  mov     [opt_cd], ah
+        mov     [cd_type], ah
+        mov     [cd_base], bx
+        mov     byte [mk_sb], 0
+        cmp     ah, CD_MKE
+        jne     .cbase
+        mov     byte [mk_sb], 1
+.cbase:
         cmp     byte [es:si], ','
         jne     .args
         inc     si
@@ -1416,6 +1452,8 @@ kw_nibble       db      'NIBBLE', 0
 kw_ps2          db      'PS2', 0
 kw_epp          db      'EPP', 0
 kw_mcd          db      'MCD', 0
+kw_mke          db      'MKE', 0
+kw_pana         db      'PANA', 0
 
 is_eol: cmp     al, 0
         je      .y

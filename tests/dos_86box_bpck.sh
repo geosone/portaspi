@@ -23,6 +23,10 @@
 # BRIDGE=mcd: no parallel port drive but Mitsumi's own ISA interface
 # (86Box's cdrom_interface mcd, an FX001D at MCDBASE, default 300h),
 # through PORTASPI /C:MCD,base.
+# BRIDGE=mke or pana: 86Box's Panasonic interface, Creative's (mkecd, the
+# Sound Blaster's) or the plain one (mkecd_normal), with a Panasonic
+# CR-563 (MKETYPE=) at MCDBASE (default 230 or 340), through /C:MKE or
+# /C:PANA.
 # BPUNIT: the BackPack's chain address (unit), default 7.
 # SWAP=1: then a second CD goes in; the redirector must see the change and
 # read a file only that CD has.
@@ -40,7 +44,12 @@ ORIGDEV=${ORIGDEV:-BPCDDRV\$}
 MSCDEX=${MSCDEX:-}
 BRIDGE=${BRIDGE:-bpck}
 BPUNIT=${BPUNIT:-}
-MCDBASE=${MCDBASE:-300}
+MKETYPE=${MKETYPE:-cr563}
+case "$BRIDGE" in
+    mke) MCDBASE=${MCDBASE:-230} ;;
+    pana) MCDBASE=${MCDBASE:-340} ;;
+    *) MCDBASE=${MCDBASE:-300} ;;
+esac
 SWAP=${SWAP:-}
 OUT=${OUT:-$ROOT/build/86box-bpck}
 test -x "$BOX"
@@ -83,6 +92,18 @@ elif [ "$BRIDGE" = mcd ]; then
     printf '\n[Storage controllers]\ncdrom_interface = mcd\n\n[Mitsumi interface]\nbase = %04X\n' \
         "0x$MCDBASE" >> "$OUT/86box.cfg"
     MGROPT="$MGROPT /C:MCD,$MCDBASE"
+elif [ "$BRIDGE" = mke ] || [ "$BRIDGE" = pana ]; then
+    IF=mkecd; SECTION="MKE/Panasonic interface (Creative)"; OPT=MKE
+    if [ "$BRIDGE" = pana ]; then
+        IF=mkecd_normal; SECTION="MKE/Panasonic interface"; OPT=PANA
+    fi
+    sed -i -e 's/^cdrom_01_parameters = 1, lpt$/cdrom_01_parameters = 1, mke/' \
+        -e '/^cdrom_01_lpt_port = 0$/d' \
+        -e "s/^cdrom_01_type = .*/cdrom_01_type = $MKETYPE/" \
+        -e 's/^lpt1_enabled = 1$/lpt1_enabled = 0/' "$OUT/86box.cfg"
+    printf '\n[Storage controllers]\ncdrom_interface = %s\n\n[%s]\nbase = %04X\n' \
+        "$IF" "$SECTION" "0x$MCDBASE" >> "$OUT/86box.cfg"
+    MGROPT="$MGROPT /C:$OPT,$MCDBASE"
 elif [ "$BRIDGE" != bpck ]; then
     sed -i "s/^cdrom_01_lpt_port = 0$/&\ncdrom_01_lpt_bridge = $BRIDGE/" "$OUT/86box.cfg"
     grep -q "^cdrom_01_lpt_bridge = $BRIDGE$" "$OUT/86box.cfg"
@@ -99,6 +120,8 @@ case "$BRIDGE" in
     friq) NAME="Freecom IQ" ;;
     bpmcd) NAME="BackPack (Mitsumi)" ;;
     mcd) NAME="Mitsumi ISA" ;;
+    mke) NAME="Panasonic (Creative)" ;;
+    pana) NAME="Panasonic" ;;
     *) NAME="BackPack" ;;
 esac
 DRV=PORTASPI

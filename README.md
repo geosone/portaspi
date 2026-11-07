@@ -22,7 +22,10 @@ and PS/2 mode), become a SCSI CD-ROM drive: READ (10) a sector at a time,
 READ CAPACITY and READ TOC from the drive's disc information (the first
 track and the lead-out only); so does such a drive on Mitsumi's own ISA
 interface with `/C:MCD` (the proprietary CD-ROM interface of early
-CD-ROM kits and sound cards, polled at its two ports). With `/F` a QIC-117 floppy tape drive on the
+CD-ROM kits and sound cards, polled at its two ports). A Panasonic CR-562
+or CR-563 on the Panasonic interface of Creative's Sound Blaster cards
+(`/C:MKE`) or on Panasonic's own card (`/C:PANA`) becomes one too, with
+READ (10) of up to 16 sectors a command and READ TOC of every track. With `/F` a QIC-117 floppy tape drive on the
 floppy controller becomes a SCSI tape drive: each volume of a
 QIC-80 cartridge (the volume table of QIC-80/QIC-113) is a tape file,
 read with READ (6) and written with WRITE (6) of variable blocks, with
@@ -63,7 +66,7 @@ ASPI manager loaded before it, so all of them can be used together.
 ## Use
 
 ```dos
-DEVICE=C:\OPENASPI\PORTASPI.SYS [/P:378] [/M:NIBBLE|PS2|EPP] [/F[:1]] [/C:MCD[,300]] [/T:15] [/ID:name] [/Q] [/V]
+DEVICE=C:\OPENASPI\PORTASPI.SYS [/P:378] [/M:NIBBLE|PS2|EPP] [/F[:1]] [/C:MCD|MKE|PANA[,base]] [/T:15] [/ID:name] [/Q] [/V]
 DEVICE=C:\OPENASPI\ASPIFDD.SYS
 ```
 
@@ -77,6 +80,10 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   reset) at base+1, polled, without IRQ or DMA. It gets the first free
   SCSI ID; PORTASPI then installs without a parallel port drive too. A
   Mitsumi drive behind a BackPack takes the place of this one.
+  `/C:MKE,base` a Panasonic CD-ROM drive of the CR-562/CR-563 family on
+  the interface of a Creative Sound Blaster (default 230h, as Linux's
+  `sbpcd`; data through base, selected at base+1), `/C:PANA,base` on
+  Panasonic's own card (default 340h; data at base+2). Drive 0, polled.
 - `/F:` also a floppy tape drive (QIC-117) on drive select line 0 to 3
   (default 1, the B: line) of the floppy controller at 3F0h. It gets the
   first free SCSI ID; PORTASPI then installs even without a parallel port
@@ -170,7 +177,10 @@ of 2002 passes, 2.13 of 1998 hangs at init). `BRIDGE=bpmcd` takes the
 Mitsumi BackPack CD-ROM instead (86Box with the `lpt_bpmcd` device), also
 with `ORIG=path/BPCDDRV.SYS` version 1.06 of 1994 and `MSCDEX=`.
 `BRIDGE=mcd` takes 86Box's Mitsumi ISA interface (`cdrom_interface = mcd`,
-an FX001D) at `MCDBASE=` (default 300) through `/C:MCD`.
+an FX001D) at `MCDBASE=` (default 300) through `/C:MCD`; `BRIDGE=mke`
+and `BRIDGE=pana` the Panasonic interface (Creative's `mkecd`, or
+`mkecd_normal`) with a CR-563 (`MKETYPE=cr562` another) through `/C:MKE`
+or `/C:PANA`.
 `tests/dos_86box_bpfdd.sh` takes the BackPack floppy drive with a 1.44 MB
 disk through `ASPIFDD.SYS` (`MGROPT=/M:NIBBLE` or `/M:PS2`), or with
 `ORIG=path/BACKPACK.SYS` through Micro Solutions' own driver; DOS reads a
