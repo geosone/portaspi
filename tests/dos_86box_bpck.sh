@@ -27,6 +27,9 @@
 # Sound Blaster's) or the plain one (mkecd_normal), with a Panasonic
 # CR-563 (MKETYPE=) at MCDBASE (default 230 or 340), through /C:MKE or
 # /C:PANA.
+# BRIDGE=sony or sonysb: 86Box's Sony interface, Sony's own (sony_cdu31a)
+# or Creative's (sony_creative), with a CDU31A (MKETYPE=sony_cdu33a the
+# CDU33A) at MCDBASE (default 340 or 230), through /C:SONY.
 # BPUNIT: the BackPack's chain address (unit), default 7.
 # SWAP=1: then a second CD goes in; the redirector must see the change and
 # read a file only that CD has.
@@ -44,10 +47,13 @@ ORIGDEV=${ORIGDEV:-BPCDDRV\$}
 MSCDEX=${MSCDEX:-}
 BRIDGE=${BRIDGE:-bpck}
 BPUNIT=${BPUNIT:-}
-MKETYPE=${MKETYPE:-cr563}
 case "$BRIDGE" in
-    mke) MCDBASE=${MCDBASE:-230} ;;
-    pana) MCDBASE=${MCDBASE:-340} ;;
+    sony*) MKETYPE=${MKETYPE:-sony_cdu31a} ;;
+    *) MKETYPE=${MKETYPE:-cr563} ;;
+esac
+case "$BRIDGE" in
+    mke|sonysb) MCDBASE=${MCDBASE:-230} ;;
+    pana|sony) MCDBASE=${MCDBASE:-340} ;;
     *) MCDBASE=${MCDBASE:-300} ;;
 esac
 SWAP=${SWAP:-}
@@ -92,12 +98,14 @@ elif [ "$BRIDGE" = mcd ]; then
     printf '\n[Storage controllers]\ncdrom_interface = mcd\n\n[Mitsumi interface]\nbase = %04X\n' \
         "0x$MCDBASE" >> "$OUT/86box.cfg"
     MGROPT="$MGROPT /C:MCD,$MCDBASE"
-elif [ "$BRIDGE" = mke ] || [ "$BRIDGE" = pana ]; then
-    IF=mkecd; SECTION="MKE/Panasonic interface (Creative)"; OPT=MKE
-    if [ "$BRIDGE" = pana ]; then
-        IF=mkecd_normal; SECTION="MKE/Panasonic interface"; OPT=PANA
-    fi
-    sed -i -e 's/^cdrom_01_parameters = 1, lpt$/cdrom_01_parameters = 1, mke/' \
+elif [ "$BRIDGE" = mke ] || [ "$BRIDGE" = pana ] || [ "$BRIDGE" = sony ] || [ "$BRIDGE" = sonysb ]; then
+    BUS=mke; IF=mkecd; SECTION="MKE/Panasonic interface (Creative)"; OPT=MKE
+    case "$BRIDGE" in
+        pana) IF=mkecd_normal; SECTION="MKE/Panasonic interface"; OPT=PANA ;;
+        sony) BUS=sony; IF=sony_cdu31a; SECTION="SONY CDU31A interface"; OPT=SONY ;;
+        sonysb) BUS=sony; IF=sony_creative; SECTION="SONY/Creative interface"; OPT=SONY ;;
+    esac
+    sed -i -e "s/^cdrom_01_parameters = 1, lpt$/cdrom_01_parameters = 1, $BUS/" \
         -e '/^cdrom_01_lpt_port = 0$/d' \
         -e "s/^cdrom_01_type = .*/cdrom_01_type = $MKETYPE/" \
         -e 's/^lpt1_enabled = 1$/lpt1_enabled = 0/' "$OUT/86box.cfg"
@@ -122,6 +130,8 @@ case "$BRIDGE" in
     mcd) NAME="Mitsumi ISA" ;;
     mke) NAME="Panasonic (Creative)" ;;
     pana) NAME="Panasonic" ;;
+    sony) NAME="Sony" ;;
+    sonysb) NAME="Sony (Creative)" ;;
     *) NAME="BackPack" ;;
 esac
 DRV=PORTASPI

@@ -64,6 +64,13 @@ mk_inq          db      05h, 80h, 02h, 02h, 31, 0, 0, 0
                 db      '    '                  ; revision
 mk_toc          times 4 + 8 * (MK_TRACKS + 1) db 0
 
+; what differs on another interface (sony.inc): CF and EAX = the sense if
+; it fails
+cd_f_ready      dw      mk_ready        ; a disc, ready to read
+cd_f_cap        dw      mk_cap          ; -> EAX = the first block after it
+cd_f_read       dw      mk_read         ; sectors from mk_lba, mk_left
+cd_f_toc        dw      mk_read_toc     ; READ TOC into mk_toc, DI its end
+
 ;-----------------------------------------------------------------------------
 ; mke_exec: the SCSI command cdb_buf with the request of dev_exec
 ;-----------------------------------------------------------------------------
@@ -87,7 +94,7 @@ mke_exec:
         mov     dword [mk_sns], 0       ; a new command clears the sense
         cmp     al, SCSI_INQUIRY
         je      .inquiry
-        call    mk_ready                ; everything else asks the drive
+        call    [cd_f_ready]            ; everything else asks the drive
         jc      .sense
         mov     al, [cdb_buf]
         cmp     al, 00h                 ; TEST UNIT READY
@@ -125,13 +132,8 @@ mke_exec:
         call    ata_give
         jmp     .good
 
-.rcap:  mov     al, MK_CMD_CAPACITY
-        call    mk_cmdset
-        mov     cx, 5
-        call    mk_exec_cmd
+.rcap:  call    [cd_f_cap]
         jc      .sense
-        mov     si, mk_res              ; the end: the first block after
-        call    mk_msf_lba
         dec     eax                     ; the last block
         BSWAP_EAX
         mov     [ata_reply], eax
@@ -145,7 +147,7 @@ mke_exec:
         jnz     .badfield
         test    byte [cdb_buf+9], 0C0h
         jnz     .badfield
-        call    mk_read_toc
+        call    [cd_f_toc]
         jc      .sense
         mov     si, mk_toc
         mov     cx, di
@@ -167,7 +169,7 @@ mke_exec:
         mov     byte [x_over], 1
 .rd:    cmp     dword [mk_left], 0
         je      .good
-        call    mk_read
+        call    [cd_f_read]
         jc      .sense
         jmp     .rd
 
@@ -391,6 +393,17 @@ mk_ready:
         stc
 .o:     pop     esi
         ret
+
+; the capacity -> EAX = the first block after the disc.  CF and EAX = the
+; sense if not.
+mk_cap: mov     al, MK_CMD_CAPACITY
+        call    mk_cmdset
+        mov     cx, 5
+        call    mk_exec_cmd
+        jc      .o
+        mov     si, mk_res
+        call    mk_msf_lba
+.o:     ret
 
 ; up to MK_BATCH sectors from mk_lba into x_buf.  CF and EAX = the sense
 ; if not.

@@ -25,7 +25,9 @@ interface with `/C:MCD` (the proprietary CD-ROM interface of early
 CD-ROM kits and sound cards, polled at its two ports). A Panasonic CR-562
 or CR-563 on the Panasonic interface of Creative's Sound Blaster cards
 (`/C:MKE`) or on Panasonic's own card (`/C:PANA`) becomes one too, with
-READ (10) of up to 16 sectors a command and READ TOC of every track. With `/F` a QIC-117 floppy tape drive on the
+READ (10) of up to 16 sectors a command and READ TOC of every track, and
+so does a Sony CDU31A or CDU33A on Sony's or Creative's interface
+(`/C:SONY`). With `/F` a QIC-117 floppy tape drive on the
 floppy controller becomes a SCSI tape drive: each volume of a
 QIC-80 cartridge (the volume table of QIC-80/QIC-113) is a tape file,
 read with READ (6) and written with WRITE (6) of variable blocks, with
@@ -66,7 +68,7 @@ ASPI manager loaded before it, so all of them can be used together.
 ## Use
 
 ```dos
-DEVICE=C:\OPENASPI\PORTASPI.SYS [/P:378] [/M:NIBBLE|PS2|EPP] [/F[:1]] [/C:MCD|MKE|PANA[,base]] [/T:15] [/ID:name] [/Q] [/V]
+DEVICE=C:\OPENASPI\PORTASPI.SYS [/P:378] [/M:NIBBLE|PS2|EPP] [/F[:1]] [/C:MCD|MKE|PANA|SONY[,base]] [/T:15] [/ID:name] [/Q] [/V]
 DEVICE=C:\OPENASPI\ASPIFDD.SYS
 ```
 
@@ -84,6 +86,10 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   the interface of a Creative Sound Blaster (default 230h, as Linux's
   `sbpcd`; data through base, selected at base+1), `/C:PANA,base` on
   Panasonic's own card (default 340h; data at base+2). Drive 0, polled.
+  `/C:SONY,base` a Sony CDU31A or CDU33A on Sony's interface (default
+  340h, as Linux's `cdu31a`) or on that of Creative's early Sound Blaster
+  Pro cards (230h there): status and command at base, results and
+  parameters at base+1, data at base+2, control at base+3; polled.
 - `/F:` also a floppy tape drive (QIC-117) on drive select line 0 to 3
   (default 1, the B: line) of the floppy controller at 3F0h. It gets the
   first free SCSI ID; PORTASPI then installs even without a parallel port
@@ -180,7 +186,9 @@ with `ORIG=path/BPCDDRV.SYS` version 1.06 of 1994 and `MSCDEX=`.
 an FX001D) at `MCDBASE=` (default 300) through `/C:MCD`; `BRIDGE=mke`
 and `BRIDGE=pana` the Panasonic interface (Creative's `mkecd`, or
 `mkecd_normal`) with a CR-563 (`MKETYPE=cr562` another) through `/C:MKE`
-or `/C:PANA`.
+or `/C:PANA`; `BRIDGE=sony` and `BRIDGE=sonysb` the Sony interface
+(`sony_cdu31a` at 340, Creative's `sony_creative` at 230) with a CDU31A
+(`MKETYPE=sony_cdu33a` the CDU33A) through `/C:SONY`.
 `tests/dos_86box_bpfdd.sh` takes the BackPack floppy drive with a 1.44 MB
 disk through `ASPIFDD.SYS` (`MGROPT=/M:NIBBLE` or `/M:PS2`), or with
 `ORIG=path/BACKPACK.SYS` through Micro Solutions' own driver; DOS reads a

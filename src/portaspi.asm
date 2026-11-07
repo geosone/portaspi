@@ -15,7 +15,8 @@
 ; Ditto cartridges.  A Mitsumi CD-ROM drive on Mitsumi's ISA interface
 ; (/C:MCD) is a SCSI CD-ROM drive too (mcd.inc), and so is a Panasonic
 ; CR-562/CR-563 on Creative's or Panasonic's interface (/C:MKE, /C:PANA;
-; mke.inc).  It works alone or together with other ASPI managers:
+; mke.inc) and a Sony CDU31A/CDU33A on Sony's or Creative's (/C:SONY;
+; sony.inc).  It works alone or together with other ASPI managers:
 ; it chains to a manager loaded before it, and managers loaded after it
 ; can chain to it.
 ;
@@ -28,7 +29,7 @@
 ;
 ; CONFIG.SYS:
 ;   DEVICE=PORTASPI.SYS [/P:addr] [/M:NIBBLE|PS2|EPP] [/F[:unit]]
-;                       [/C:MCD|MKE|PANA[,base]] [/T:s] [/ID:name] [/Q] [/V]
+;                       [/C:MCD|MKE|PANA|SONY[,base]] [/T:s] [/ID:name] [/Q] [/V]
 ;
 ;   /P:addr  parallel port base address in hex (default: the LPT ports in
 ;            the BIOS data area, the first one with a drive)
@@ -39,7 +40,8 @@
 ;   /C:if,base  also a CD-ROM drive on a proprietary ISA interface at port
 ;            base (hex): MCD Mitsumi's (default 300h; mcd.inc), MKE the
 ;            Panasonic interface of Creative's Sound Blaster cards (230h),
-;            PANA Panasonic's own card (340h; both mke.inc)
+;            PANA Panasonic's own card (340h; both mke.inc), SONY Sony's
+;            CDU31A interface (340h; Creative's at 230h; sony.inc)
 ;   /T:s     command timeout in seconds (default 15)
 ;   /ID:name ASPI manager id (default PORTASPI)
 ;   /Q       quiet, /V verbose
@@ -597,6 +599,7 @@ auto_sense:
 %include "fdc.inc"
 %include "mcd.inc"
 %include "mke.inc"
+%include "sony.inc"
 %include "qic.inc"
 %include "atapi.inc"
 
@@ -622,6 +625,7 @@ opt_cd          db      0               ; /C: the interface, CD_xxx
 CD_MCD          equ     1
 CD_MKE          equ     2               ; Creative's Panasonic interface
 CD_PANA         equ     3               ; Panasonic's own
+CD_SONY         equ     4               ; Sony's (or Creative's) CDU31A
 res_end         dw      resident_end    ; and the tape's buffer
 inq_buf         times 36 db 0
 id_buf          times 512 db 0         ; IDENTIFY DEVICE data
@@ -634,10 +638,11 @@ msg_no_tape     db      'PORTASPI: no drive found on the parallel ports or the f
 msg_cd          db      '  CD-ROM interface ', 0
 msg_cd2         db      'h: ', 0
 msg_no_cd       db      'PORTASPI: no CD-ROM drive at the /C: port', 13, 10, 0
-id_cd           dw      id_mcd, id_mcd, id_mke, id_pana
+id_cd           dw      id_mcd, id_mcd, id_mke, id_pana, id_sony
 id_mcd          db      'MCD ', 0
 id_mke          db      'MKE ', 0
 id_pana         db      'PANA ', 0
+id_sony         db      'SONY ', 0
 msg_tape        db      '  floppy controller 3F0h, unit ', 0
 msg_tape2       db      ': QIC-117 tape', 13, 10, 0
 id_tape         db      'QIC FDC 03F0 u', 0
@@ -879,7 +884,11 @@ cd_setup:
         call    mcd_probe
         mov     byte [mc_isa], 0
         jmp     .probed
-.mke:   call    mke_probe
+.mke:   cmp     byte [opt_cd], CD_SONY
+        je      .sony
+        call    mke_probe
+        jmp     .probed
+.sony:  call    sony_probe
 .probed:
         jc      .nodrv
         mov     [cd_id], bl
@@ -1357,7 +1366,16 @@ parse_cmdline:
         mov     ah, CD_PANA
         mov     bx, 340h
         call    match_kw
+        jnc     .setc
+        mov     di, kw_sony
+        mov     ah, CD_SONY
+        mov     bx, 340h
+        call    match_kw
         jc      .bad
+        mov     word [cd_f_ready], sy_ready
+        mov     word [cd_f_cap], sy_cap
+        mov     word [cd_f_read], sy_read
+        mov     word [cd_f_toc], sy_read_toc
 .setc:  mov     [opt_cd], ah
         mov     [cd_type], ah
         mov     [cd_base], bx
@@ -1453,6 +1471,7 @@ kw_ps2          db      'PS2', 0
 kw_epp          db      'EPP', 0
 kw_mcd          db      'MCD', 0
 kw_mke          db      'MKE', 0
+kw_sony         db      'SONY', 0
 kw_pana         db      'PANA', 0
 
 is_eol: cmp     al, 0
