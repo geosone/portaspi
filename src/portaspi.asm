@@ -14,8 +14,8 @@
 ; qicecc.inc): reading, writing and formatting QIC-80, QIC-3010/3020 and
 ; Ditto cartridges.  A Mitsumi CD-ROM drive on Mitsumi's ISA interface
 ; (/C:MCD) is a SCSI CD-ROM drive too (mcd.inc), and so is a Panasonic
-; CR-562/CR-563 on Creative's or Panasonic's interface (/C:MKE, /C:PANA;
-; mke.inc) and a Sony CDU31A/CDU33A on Sony's or Creative's (/C:SONY;
+; CR-521/CR-562/CR-563, a Creative CD-200 or a TEAC CD-55A on Creative's or
+; Panasonic's interface (/C:MKE, /C:PANA; mke.inc) and a Sony CDU31A/CDU33A on Sony's or Creative's (/C:SONY;
 ; sony.inc).  It works alone or together with other ASPI managers:
 ; it chains to a manager loaded before it, and managers loaded after it
 ; can chain to it.
@@ -168,6 +168,7 @@ prev_count      db      0               ; its host adapters = our HA number
 in_aspi         db      0
 old_ss          dw      0
 old_sp          dw      0
+stk_seg         dw      0               ; our stack, after the resident part
 srb_ptr         dd      0
 post_ptr        dd      0
 
@@ -230,9 +231,8 @@ aspi_entry:
         cli
         mov     [old_ss], ss
         mov     [old_sp], sp
-        mov     ax, cs
-        mov     ss, ax
-        mov     sp, stack_top
+        mov     ss, [stk_seg]
+        mov     sp, STACK_SIZE
         push    dx
         popf
 .nested:
@@ -604,12 +604,10 @@ auto_sense:
 %include "atapi.inc"
 
 ;-----------------------------------------------------------------------------
-; Stack
+; The stack, STACK_SIZE bytes, has a segment of its own after the resident
+; part (and the tape's buffer): stk_seg.  CS keeps its 64 KB for the code,
+; the data and that buffer.
 ;-----------------------------------------------------------------------------
-                align   16
-stack_bottom:   times STACK_SIZE db 0
-stack_top:
-
 resident_end:
 
 ;=============================================================================
@@ -741,15 +739,27 @@ init:
         mov     ax, 251Ch
         int     21h
 .notimer:
+        mov     ax, [res_end]           ; the stack: the next paragraph
+        add     ax, 15
+        shr     ax, 4
+        mov     dx, cs
+        add     ax, dx
+        mov     [stk_seg], ax
+        add     ax, STACK_SIZE / 16     ; the end
         les     bx, [req_ptr]
-        mov     ax, [res_end]
-        mov     [es:bx+RQ_END], ax
+        mov     word [es:bx+RQ_END], 0
+        mov     [es:bx+RQ_END+2], ax
         cmp     byte [opt_verbose], 0
         je      .sized
+        push    ax
         mov     si, msg_resident
         call    print
-        mov     ax, [res_end]
-        call    print_dec
+        pop     ax
+        mov     dx, cs
+        sub     ax, dx                  ; paragraphs
+        movzx   eax, ax
+        shl     eax, 4
+        call    print_dec32
         mov     si, msg_bytes
         call    print
         mov     ax, cs
@@ -758,7 +768,6 @@ init:
         call    print
         les     bx, [req_ptr]
 .sized:
-        mov     [es:bx+RQ_END+2], cs
         mov     word [es:bx+RQ_STATUS], 0100h
         jmp     init_out
 
@@ -1219,26 +1228,33 @@ print_hex8:
 .p:     jmp     putc
 
 print_dec:                              ; AX
-        push    ax
-        push    bx
+        push    eax
+        movzx   eax, ax
+        call    print_dec32
+        pop     eax
+        ret
+
+print_dec32:                            ; EAX
+        push    eax
+        push    ebx
         push    cx
-        push    dx
-        mov     bx, 10
+        push    edx
+        mov     ebx, 10
         xor     cx, cx
-.div:   xor     dx, dx
-        div     bx
+.div:   xor     edx, edx
+        div     ebx
         push    dx
         inc     cx
-        or      ax, ax
+        or      eax, eax
         jnz     .div
 .out:   pop     ax
         add     al, '0'
         call    putc
         loop    .out
-        pop     dx
+        pop     edx
         pop     cx
-        pop     bx
-        pop     ax
+        pop     ebx
+        pop     eax
         ret
 
 ; CF if the CPU is older than a 386

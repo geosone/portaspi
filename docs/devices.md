@@ -79,8 +79,9 @@ manager of its own:
   (`mcd`, `mcdx`; **done**: `/C:MCD`, the protocol of `mcd.inc` that the
   first BackPack CD-ROMs use too), Sony CDU-31A/33A (`cdu31a`; **done**:
   `/C:SONY`, `sony.inc`) and CDU-535 (`sonycd535`),
-  Panasonic/Matsushita on Creative cards (`sbpcd`; **done** for the
-  CR-562/CR-563 family: `/C:MKE` and `/C:PANA`, `mke.inc`), Aztech (`aztcd`),
+  Panasonic/Matsushita on Creative cards (`sbpcd`; **done**: `/C:MKE`
+  and `/C:PANA`, `mke.inc`, with the CR-562/CR-563, CR-521, CD-200 and
+  TEAC CD-55A protocols), Aztech (`aztcd`),
   Goldstar (`gscd`), Philips CM206 (`cm206`), Optics Storage (`optcd`),
   Sanyo (`sjcd`), ISP16 interface (`isp16`); all in `drivers/cdrom/` of
   older kernels. They would give these drives ASPICDA, SHSUCDX and digital

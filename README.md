@@ -24,7 +24,9 @@ track and the lead-out only); so does such a drive on Mitsumi's own ISA
 interface with `/C:MCD` (the proprietary CD-ROM interface of early
 CD-ROM kits and sound cards, polled at its two ports). A Panasonic CR-562
 or CR-563 on the Panasonic interface of Creative's Sound Blaster cards
-(`/C:MKE`) or on Panasonic's own card (`/C:PANA`) becomes one too, with
+(`/C:MKE`) or on Panasonic's own card (`/C:PANA`) becomes one too, and so
+do the other drives of that interface, a CR-521, Creative's CD-200,
+Funai's CD200F and TEAC's CD-55A (the probe tells their protocol), with
 READ (10) of up to 16 sectors a command and READ TOC of every track, and
 so does a Sony CDU31A or CDU33A on Sony's or Creative's interface
 (`/C:SONY`). With `/F` a QIC-117 floppy tape drive on the
@@ -82,7 +84,8 @@ DEVICE=C:\OPENASPI\ASPIFDD.SYS
   reset) at base+1, polled, without IRQ or DMA. It gets the first free
   SCSI ID; PORTASPI then installs without a parallel port drive too. A
   Mitsumi drive behind a BackPack takes the place of this one.
-  `/C:MKE,base` a Panasonic CD-ROM drive of the CR-562/CR-563 family on
+  `/C:MKE,base` a Panasonic CD-ROM drive (CR-562/CR-563, CR-521; also a
+  Creative CD-200, Funai CD200F or TEAC CD-55A) on
   the interface of a Creative Sound Blaster (default 230h, as Linux's
   `sbpcd`; data through base, selected at base+1), `/C:PANA,base` on
   Panasonic's own card (default 340h; data at base+2). Drive 0, polled.
@@ -185,7 +188,8 @@ with `ORIG=path/BPCDDRV.SYS` version 1.06 of 1994 and `MSCDEX=`.
 `BRIDGE=mcd` takes 86Box's Mitsumi ISA interface (`cdrom_interface = mcd`,
 an FX001D) at `MCDBASE=` (default 300) through `/C:MCD`; `BRIDGE=mke`
 and `BRIDGE=pana` the Panasonic interface (Creative's `mkecd`, or
-`mkecd_normal`) with a CR-563 (`MKETYPE=cr562` another) through `/C:MKE`
+`mkecd_normal`) with a CR-563 (`MKETYPE=` another: `cr562`, `cr521b`,
+`creative_cd200`, `funai_cd200f`, `teac_cd55a`) through `/C:MKE`
 or `/C:PANA`; `BRIDGE=sony` and `BRIDGE=sonysb` the Sony interface
 (`sony_cdu31a` at 340, Creative's `sony_creative` at 230) with a CDU31A
 (`MKETYPE=sony_cdu33a` the CDU33A) through `/C:SONY`.

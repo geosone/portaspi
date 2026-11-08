@@ -62,10 +62,10 @@
    interface for the CR-562/CR-563** (`/C:MKE` on Creative's cards,
    `/C:PANA` on Panasonic's; 86Box's MKE model), **and the Sony
    interface for the CDU31A/CDU33A** (`/C:SONY`, Sony's and Creative's;
-   86Box's Sony model, disc change too). Still open there: the Panasonic
-   interface's other drive families (CR-521, CD-200, TEAC CD-55A). 86Box
-   also emulates the Philips CM250 and CM-153 and Hitachi interfaces, the
-   candidates after it.
+   86Box's Sony model, disc change too), with all four protocols of the
+   Panasonic interface (CR-562/CR-563, CR-521, CD-200/CD200F, TEAC
+   CD-55A; the probe tells them). 86Box also emulates the Philips CM250
+   and CM-153 and Hitachi interfaces, the candidates after it.
 
 ## Testing
 
